@@ -11,6 +11,21 @@
 
 ## 快速开始
 
+### 下载
+
+到 [Releases](https://github.com/TzJ2006/EyeCareAmber/releases) 取通用二进制版本。
+
+```bash
+unzip Amber-1.0.0-universal.zip
+mv Amber.app /Applications/
+xattr -dr com.apple.quarantine /Applications/Amber.app
+open /Applications/Amber.app
+```
+
+**`xattr` 那行是必须的。** 发布版只做了临时签名、没有公证——这个项目背后没有付费的 Apple 开发者证书。macOS 会隔离一切从网上下载、且它无法验证的程序，直接拒绝启动。不想运行这条命令就从源码构建，本地构建出来的 app 不会带隔离标记。
+
+### 从源码构建
+
 ```bash
 git clone https://github.com/TzJ2006/EyeCareAmber.git
 cd EyeCareAmber && ./build.sh --install

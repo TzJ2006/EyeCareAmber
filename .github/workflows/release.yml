@@ -1,0 +1,154 @@
+name: Release
+
+# 打 v* 标签就自动构建并发布。手动触发时只构建、不发布，用来预演。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "预演用的版本号（不会创建 release）"
+        required: false
+        default: "0.0.0-dev"
+
+permissions:
+  contents: write     # 创建 release 需要
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 解析版本号
+        id: v
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          # CFBundleShortVersionString 只接受点分数字
+          if ! echo "$VERSION" | grep -qE '^[0-9]+(\.[0-9]+){0,2}$'; then
+            echo "版本号 '$VERSION' 不是 x.y.z 形式，Info.plist 会不合法"; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "发布版本：$VERSION"
+
+      # 发布前把 CI 的核心检查再跑一遍。tag 可能打在没过 CI 的提交上，
+      # 不能假设它已经验证过。
+      - name: 预检
+        run: |
+          set -euo pipefail
+          swift build
+          python3 Scripts/check-localization.py
+          python3 Scripts/check-readme-parity.py
+          TZ=Asia/Shanghai ./.build/debug/Amber --selftest > /tmp/st.txt 2>&1 || { cat /tmp/st.txt; exit 1; }
+          grep -q '✗' /tmp/st.txt && { cat /tmp/st.txt; exit 1; }
+          grep -E '✓' /tmp/st.txt
+
+      # 通用二进制：Apple Silicon 原生，同时也能在还能跑 macOS 15 的 Intel Mac 上启动。
+      - name: 打包通用二进制 .app
+        env:
+          AMBER_VERSION: ${{ steps.v.outputs.version }}
+        run: ./build.sh --universal
+
+      # 关键一步：release 构建的资源加载路径和 debug 不同
+      # （走 .app 里的 Amber_Amber.bundle，而不是 .build 里的）。
+      # 直接跑打包好的那个二进制，才能证明本地化资源真的能加载。
+      - name: 验证打包产物
+        run: |
+          set -euo pipefail
+          APP="build/Amber.app"
+          BIN="$APP/Contents/MacOS/Amber"
+          test -x "$BIN"
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --verify --strict --verbose=2 "$APP"
+
+          ARCHS=$(lipo -archs "$BIN")
+          echo "$ARCHS" | grep -q arm64  || { echo "缺少 arm64"; exit 1; }
+          echo "$ARCHS" | grep -q x86_64 || { echo "缺少 x86_64"; exit 1; }
+
+          PLIST_VER=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")
+          [ "$PLIST_VER" = "${{ steps.v.outputs.version }}" ] \
+            || { echo "Info.plist 版本 $PLIST_VER 与 tag 不符"; exit 1; }
+
+          # release 构建会把 assert() 整个编译掉，所以 --selftest 在这里
+          # 即使资源加载失败也照样打印 ✓。--print-locale 不依赖 assert：
+          # 资源丢了就原样吐出 key 并以非零退出。
+          # 这一步是必要的 —— 通用二进制走的是 xcbuild，产出的 bundle 布局
+          # 和大小写都与原生构建不同，只测原生构建等于没测。
+          "$BIN" --print-locale
+
+          echo "✓ $ARCHS · $PLIST_VER · $(du -sh "$APP" | cut -f1)"
+
+      # 必须用 ditto：zip 会丢掉符号链接和权限位，进而破坏代码签名。
+      - name: 压缩并计算校验和
+        id: pack
+        run: |
+          set -euo pipefail
+          NAME="Amber-${{ steps.v.outputs.version }}-universal.zip"
+          ditto -c -k --keepParent --sequesterRsrc build/Amber.app "$NAME"
+          # 解压回来再验一次签名，确认打包过程没破坏它
+          rm -rf /tmp/unz && mkdir /tmp/unz && ditto -x -k "$NAME" /tmp/unz
+          codesign --verify --strict /tmp/unz/Amber.app
+          echo "✓ 解压后签名仍然有效"
+          shasum -a 256 "$NAME" | tee checksum.txt
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "sha=$(shasum -a 256 "$NAME" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: 上传构建产物（预演也能下载）
+        uses: actions/upload-artifact@v4
+        with:
+          name: Amber-${{ steps.v.outputs.version }}
+          path: ${{ steps.pack.outputs.name }}
+
+      - name: 创建 release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.v.outputs.version }}
+          ZIP: ${{ steps.pack.outputs.name }}
+          SHA: ${{ steps.pack.outputs.sha }}
+        run: |
+          set -euo pipefail
+          cat > notes.md <<NOTES
+          Universal build (arm64 + x86_64), macOS 15+.
+
+          ## Install
+
+          \`\`\`bash
+          unzip $ZIP
+          mv Amber.app /Applications/
+          xattr -dr com.apple.quarantine /Applications/Amber.app
+          open /Applications/Amber.app
+          \`\`\`
+
+          **The \`xattr\` line is required.** This build is ad-hoc signed, not
+          notarized — there is no paid Apple Developer certificate behind it.
+          macOS quarantines anything downloaded from the internet that it cannot
+          verify, and will refuse to launch it. Removing the quarantine attribute
+          is what tells macOS you accept that. If you would rather not run that
+          command, build from source instead — \`./build.sh --install\` — which
+          produces the same app without ever acquiring the quarantine flag.
+
+          Amber lives in the menu bar only; it has no Dock icon and no window.
+
+          ## Verify the download
+
+          \`\`\`
+          $SHA  $ZIP
+          \`\`\`
+
+          Built by GitHub Actions from \`${GITHUB_SHA}\`, not from anyone's laptop.
+          The run log shows the toolchain and every check that had to pass:
+          build, four-locale key parity, README parity, self-test, universal-binary
+          and signature verification, and a launch of the packaged binary to prove
+          the bundled resources actually load.
+          NOTES
+
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Amber $V" \
+            --notes-file notes.md \
+            "$ZIP" "checksum.txt"

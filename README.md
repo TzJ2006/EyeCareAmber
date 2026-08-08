@@ -11,6 +11,21 @@ A menu-bar lighting tool for macOS 15+. Native on Apple Silicon. Steady-state CP
 
 ## Quick start
 
+### Download
+
+Grab the universal build from [Releases](https://github.com/TzJ2006/EyeCareAmber/releases).
+
+```bash
+unzip Amber-1.0.0-universal.zip
+mv Amber.app /Applications/
+xattr -dr com.apple.quarantine /Applications/Amber.app
+open /Applications/Amber.app
+```
+
+**The `xattr` line is required.** Release builds are ad-hoc signed, not notarized — there is no paid Apple Developer certificate behind this project. macOS quarantines anything downloaded from the internet it cannot verify and refuses to launch it. If you would rather not run that command, build from source instead; a locally built app never acquires the quarantine flag.
+
+### Build from source
+
 ```bash
 git clone https://github.com/TzJ2006/EyeCareAmber.git
 cd EyeCareAmber && ./build.sh --install

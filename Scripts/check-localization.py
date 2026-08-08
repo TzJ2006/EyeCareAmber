@@ -66,33 +66,49 @@ def main():
     else:
         print("✓ 引用的 key 全部有定义")
 
-    # Localization.swift 里的语言码必须匹配**构建产物**里的 lproj 目录名。
+    # 代码里的每个语言码，在**每一种**构建产物里都必须能找到对应的 .lproj。
     #
-    # 这条检查有真实来由：源码目录是 `zh-Hans.lproj`，但 SwiftPM 打包时会转成
-    # 小写 `zh-hans.lproj`。`Bundle.path(forResource:ofType:)` 按精确字符串匹配
-    # 资源表，大小写对不上就返回 nil，界面静默退化成原始 key —— 编译不报错、
-    # 本机也不一定复现。所以必须对着产物核对，而不是对着源码目录。
+    # 为什么不能只比字符串相等：两条构建路径产出的东西根本不一样 ——
+    #
+    #   swift build（原生）          扁平布局，目录名转小写：  zh-hans.lproj
+    #   --arch a --arch b（xcbuild） 嵌套 Contents/Resources/，保留规范写法：zh-Hans.lproj
+    #
+    # 所以 Localization.swift 改成了不区分大小写地查找。这里要验的相应地
+    # 变成「每种布局下都能找到」，而不是「大小写完全一致」。
     swift_src = (SRC / "Localization.swift").read_text(encoding="utf-8")
     codes = set(re.findall(r'return\s+(?:self == \.\w+\s*\?\s*)?"([a-zA-Z-]+)"', swift_src))
     codes |= set(re.findall(r'hasPrefix\("[a-z]+"\)\s*\{\s*return\s+"([a-zA-Z-]+)"', swift_src))
-    codes &= {c for c in codes if c.lower() in {l[:-len(".lproj")].lower() for l in langs}}
+    src_langs = {l[: -len(".lproj")].lower() for l in langs}
+    codes = {c for c in codes if c.lower() in src_langs}
 
-    built = sorted(ROOT.glob(".build/*/Amber_Amber.bundle")) + \
-            sorted(ROOT.glob(".build/*/*/Amber_Amber.bundle"))
-    if not built:
+    bundles = sorted(ROOT.glob(".build/**/Amber_Amber.bundle"))
+    if not bundles:
         print("\n· 未找到构建产物，跳过语言码核对（先跑一次 swift build）")
+    elif not codes:
+        print("\n· 未从 Localization.swift 解析出语言码，跳过核对")
     else:
-        names = {p.name[:-len(".lproj")] for p in built[0].iterdir() if p.name.endswith(".lproj")}
-        bad = {c for c in codes if c not in names}
-        if bad:
-            failed = True
-            print(f"\n✗ 语言码与构建产物中的 lproj 名不符（{built[0].name}）：")
-            for c in sorted(bad):
-                near = [n for n in names if n.lower() == c.lower()]
-                print(f"    代码用 \"{c}\"，产物里是 " +
-                      (f"\"{near[0]}.lproj\"" if near else "（不存在）"))
-        else:
-            print(f"✓ 语言码与构建产物中的 lproj 名一致（{sorted(codes)}）")
+        print()
+        for bundle in bundles:
+            # 两种布局：扁平，或嵌套在 Contents/Resources 下
+            roots = [bundle, bundle / "Contents" / "Resources"]
+            found = {}
+            for r in roots:
+                if not r.is_dir():
+                    continue
+                for p in r.iterdir():
+                    if p.name.endswith(".lproj"):
+                        found[p.name[: -len(".lproj")].lower()] = p.name
+            if not found:
+                continue
+            rel = bundle.relative_to(ROOT)
+            missing = {c for c in codes if c.lower() not in found}
+            if missing:
+                failed = True
+                print(f"✗ {rel}：找不到 {', '.join(sorted(missing))} 对应的 .lproj")
+                print(f"    产物里只有：{', '.join(sorted(found.values()))}")
+            else:
+                shown = ", ".join(f"{c}→{found[c.lower()]}" for c in sorted(codes))
+                print(f"✓ {rel}：{shown}")
 
     unused = tables[base] - used
     if unused:

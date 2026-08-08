@@ -27,6 +27,10 @@ enum Diagnostics {
             comparePresets()
             return true
         }
+        if args.contains("--print-locale") {
+            printLocaleSamples()
+            return true
+        }
         if let i = args.firstIndex(of: "--render-ui"), args.count > i + 1 {
             MainActor.assumeIsolated { renderMenuProbe(to: args[i + 1], expandAdvanced: args.contains("--advanced")) }
             return true
@@ -94,6 +98,30 @@ enum Diagnostics {
             if max(abs(b0.1 - r0.1), max(abs(b0.2 - r0.2), abs(b0.3 - r0.3))) > 0.002 { clean = false }
         }
         print(clean ? "\n✓ 已完全还原到原始校准" : "\n✗ 还原后与原始不一致")
+    }
+
+    /// 打印每种语言实际解析出来的字符串，退出码表示是否全部成功。
+    ///
+    /// 存在的理由：`--selftest` 靠 `assert()` 验证，而 release 构建会把 assert
+    /// 整个编译掉 —— 打包好的 app 即使读不到本地化资源，自检照样打印 ✓。
+    /// 而资源加载路径恰恰在 release 下才不同（走 .app 里的 Amber_Amber.bundle）。
+    /// 这里不依赖 assert：资源丢了就会原样吐出 key，字符串比对立刻能看出来。
+    private static func printLocaleSamples() {
+        setvbuf(stdout, nil, _IONBF, 0)
+        // 挑一个不含格式化占位符、四种语言译文互不相同的 key。
+        let key = "night.title"
+        var ok = true
+        for lang in [AppLanguage.en, .fr, .es, .zhHans] {
+            let value = lang.text(key)
+            let resolved = value != key
+            if !resolved { ok = false }
+            print("\(lang.rawValue)\t\(key) = \(value)\t\(resolved ? "OK" : "UNRESOLVED")")
+        }
+        if !ok {
+            print("资源未加载：字符串原样返回了 key。"
+                + "检查 .app/Contents/Resources/Amber_Amber.bundle 是否存在且含各 lproj。")
+        }
+        exit(ok ? 0 : 1)
     }
 
     /// 并排比较两套预设的光度学 / 光生物学后果。

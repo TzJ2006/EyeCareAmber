@@ -55,11 +55,12 @@ jobs:
         run: |
           set -euo pipefail
           APP=build/Amber.app
-          test -x "$APP/Contents/MacOS/Amber"
+          BIN="$APP/Contents/MacOS/Amber"
+          test -x "$BIN"
           plutil -lint "$APP/Contents/Info.plist"
           codesign --verify --strict "$APP"
-          for lang in en fr es zh-hans; do
-            test -f "$APP/Contents/Resources/Amber_Amber.bundle/$lang.lproj/Localizable.strings" \
-              || { echo "产物里缺少 $lang.lproj"; exit 1; }
-          done
+          # 不要用 test -f 去猜 lproj 的目录名和布局：两条构建路径
+          # 产出的大小写和层级都不同，而且大小写不敏感的卷会让 test 假通过。
+          # 直接跑打包好的二进制，让它自己报告每种语言解析成功与否。
+          "$BIN" --print-locale
           echo "✓ 产物完整：$(du -sh "$APP" | cut -f1)，$(lipo -archs "$APP/Contents/MacOS/Amber")"

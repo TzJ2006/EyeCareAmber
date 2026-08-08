@@ -13,7 +13,9 @@ cd "$(dirname "$0")"
 APP_NAME="Amber"
 DISPLAY_NAME="琥珀护眼"
 BUNDLE_ID="com.amber.eyecare"
-VERSION="1.0.0"
+# 发布流程会用 tag 覆盖这个值（AMBER_VERSION=1.2.3），
+# 保证 Info.plist 里的版本号和 git tag 永远一致。
+VERSION="${AMBER_VERSION:-1.0.0}"
 
 UNIVERSAL=false
 INSTALL=false
