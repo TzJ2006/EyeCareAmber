@@ -99,7 +99,7 @@ jobs:
           echo "sha=$(shasum -a 256 "$NAME" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: 上传构建产物（预演也能下载）
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Amber-${{ steps.v.outputs.version }}
           path: ${{ steps.pack.outputs.name }}
