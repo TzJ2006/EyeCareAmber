@@ -1,226 +1,231 @@
-# 琥珀护眼 (Amber)
+# Amber
 
-面向 macOS 15 及更高版本的菜单栏光照工具。Apple Silicon 原生，稳态 CPU 占用 0.0%。
+> [中文文档](README.zh-Hans.md)
+
+[![CI](https://github.com/TzJ2006/EyeCareAmber/actions/workflows/ci.yml/badge.svg)](https://github.com/TzJ2006/EyeCareAmber/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+A menu-bar lighting tool for macOS 15+. Native on Apple Silicon. Steady-state CPU: 0.0%.
 
 ---
 
-## 快速开始
+## Quick start
 
 ```bash
 git clone https://github.com/TzJ2006/EyeCareAmber.git
 cd EyeCareAmber && ./build.sh --install
 ```
 
-构建产物在 `build/Amber.app`，`--install` 会装到 `/Applications` 并启动。启动后看菜单栏右上角。
+The build product is `build/Amber.app`. `--install` copies it to `/Applications` and launches it. Look for the icon in the menu bar.
 
 ```bash
-./build.sh              # 仅 arm64（推荐）
+./build.sh              # arm64 only (recommended)
 ./build.sh --universal  # arm64 + x86_64
 ```
 
 ---
 
-## 技术方案：为什么不用覆盖窗口
+## Approach: why not an overlay window
 
-大多数同类工具的做法是**盖一层半透明黄色窗口**。本项目改用**修改显示器 Gamma 查找表（LUT）**，这是 f.lux 和系统「夜览」采用的路径。
+Most similar tools **paint a translucent yellow overlay**. Amber instead **writes the display gamma lookup table (LUT)** — the same path used by f.lux and system Night Shift.
 
-| | 覆盖窗口 | Gamma LUT（本项目） |
+| | Overlay window | Gamma LUT (this project) |
 |---|---|---|
-| 持续开销 | 合成器每帧多混合一层全屏图层 | **0** — 写一次进显示管线，之后由扫描输出硬件应用 |
-| 覆盖范围 | 盖不住比它层级更高的东西 | 所有屏幕、所有窗口、全屏应用、游戏、菜单栏、Dock |
-| 对比度 | 往画面上加光，黑色变灰 | 缩放输出，黑还是黑 |
-| 截图 / 录屏 | 会被拍进去 | 不影响（通常是优点） |
+| Ongoing cost | Compositor blends an extra fullscreen layer every frame | **0** — written once into the display pipeline, then applied by scan-out hardware |
+| Coverage | Cannot cover windows above it | All screens, all windows, fullscreen apps, games, menu bar, Dock |
+| Contrast | Adds light on top; blacks go gray | Scales output; black stays black |
+| Screenshots / recording | Captured in the image | Not affected (usually a plus) |
 
-代价：极少数采集卡 / 虚拟显示器写不进 LUT。程序会自动检测并回落到覆盖窗口，也可以在高级设置里强制。
+Trade-off: a few capture cards / virtual displays cannot accept LUT writes. The app detects that and falls back to an overlay, or you can force overlay in Advanced settings.
 
-覆盖窗口只用于用户明确设置的“额外调暗”或 LUT 不可用时的兼容回落。科学预设的深夜额外调暗为 0；不需要时窗口不会创建。
+The overlay is used only for explicit “extra dimming” or when LUT is unavailable. Science presets use 0 extra dimming at night; the window stays closed when not needed.
 
-### 与系统自动亮度的分工
+### Division of labor with system auto-brightness
 
-请开启 macOS 自动亮度。系统负责环境光传感器与硬件背光，Amber 不读取 ALS、不控制系统亮度，只在当前背光上叠加 LUT 相对衰减。外接屏或关闭自动亮度时仍执行时间曲线，但不会随环境光调整；画面过暗时应提高系统亮度或暂停 Amber。
+Keep macOS auto-brightness on. The system owns the ambient light sensor and hardware backlight. Amber does not read ALS or control system brightness; it only applies relative LUT attenuation on top of the current backlight. On external displays or with auto-brightness off, the schedule still runs but will not track ambient light. If the picture is too dark, raise system brightness or pause Amber.
 
-### 功耗设计
+### Power design
 
-- **没有轮询循环。** 单个 `DispatchSourceTimer`，下一次触发时刻由排班器算出来。
-- **斜坡期按感知阈值自适应步进**，不是固定间隔。色温阈值 5 mired、亮度阈值 0.8%，都低于人眼在渐变、无参照条件下的分辨能力。平滑曲线两端能连睡十几分钟，只有最陡的中段才几十秒醒一次。
-- **给足 leeway**（平台期 300 秒），让内核把我们的唤醒和其它进程合并。
-- **增益不变就不写 LUT。**
-- **UI 只在菜单打开时更新。**
-- 没有 `CVDisplayLink`、没有逐帧回调、没有常驻后台线程。
+- **No polling loop.** A single `DispatchSourceTimer`; the next fire time comes from the scheduler.
+- **Adaptive steps on ramps** by perceptual thresholds, not a fixed interval. CCT threshold 5 mired, brightness 0.8% — both below what the eye can resolve under gradual, no-reference conditions. Flat ends of the curve can sleep for tens of minutes; only the steep middle wakes every few tens of seconds.
+- **Generous leeway** (300 s on plateaus) so the kernel can coalesce wakes with other processes.
+- **No LUT write if gains are unchanged.**
+- **UI updates only while the menu is open.**
+- No `CVDisplayLink`, no per-frame callbacks, no resident background thread.
 
-实测：24 小时约 271 次定时器唤醒（平均 5 分钟一次）。作为对照，一台空闲的 Mac 每秒就有上千次定时器唤醒。
+Measured: ~271 timer wakes in 24 hours (about once every 5 minutes). For comparison, an idle Mac has thousands of timer wakes per second.
 
 ---
 
-## 医学依据
+## Evidence base
 
-先说三件文献支持不了的事，避免这个软件建立在错误前提上：
+Three things the literature does **not** support — so this app is not built on them:
 
-1. **屏幕蓝光不会损伤眼睛。** 美国眼科学会（AAO）的立场是数字设备的蓝光既不导致眼疲劳也不导致眼病。屏幕蓝光强度约为自然日光的千分之一。
-2. **蓝光过滤眼镜对眼疲劳没有确证效果。** 2023 年 Cochrane 系统综述（17 项研究，619 人）结论是：短期随访下，蓝光过滤镜片相比普通镜片**可能不能**减轻电脑使用引起的眼疲劳，对最佳矫正视力也无差异，且没有证据表明能保护视网膜。
-3. **数字眼疲劳的主因是用眼方式，不是光谱。** 盯屏幕时眨眼频率下降、调节持续紧张、干眼 —— 这些才是症状来源。有效对策是 20-20-20 法则（每 20 分钟看 20 英尺外 20 秒）。
+1. **Screen blue light does not damage the eyes.** The American Academy of Ophthalmology’s position is that blue light from digital devices neither causes eye strain nor eye disease. Screen blue light is about one-thousandth the intensity of daylight.
+2. **Blue-blocking glasses have no proven effect on eye strain.** A 2023 Cochrane review (17 studies, 619 people) found that, at short follow-up, blue-filtering lenses **may not** reduce computer-related eye strain versus clear lenses, with no difference in best-corrected acuity and no evidence of retinal protection.
+3. **Digital eye strain is driven mainly by how we use our eyes, not by spectrum.** Lower blink rate, sustained accommodation, dry eye — those are the usual sources. The useful advice is the 20-20-20 rule (every 20 minutes, look 20 feet away for 20 seconds).
 
-**所以这个软件真正有依据的目标不是「护眼」，而是「减少夜间光照对昼夜节律和睡眠的干扰」，外加傍晚降低屏幕与环境的亮度反差。** 这两件事证据都是扎实的。
+**So the evidence-backed goals of this software are not “eye protection,” but “reduce nighttime light’s interference with circadian rhythm and sleep,” plus lowering screen-to-room contrast in the evening.** Both of those are well supported.
 
-### 光照剂量：具体数值从哪来
+### Light dose: where the numbers come from
 
-Brown et al. (2022, *PLOS Biology*) 是目前最权威的专家共识，由 Brainard、Cajochen、Czeisler、Lockley 等昼夜节律领域核心研究者共同签署。它用 **melanopic EDI**（黑视素等效日光照度，CIE S 026:2018 定义）作为量纲，给出：
+Brown et al. (2022, *PLOS Biology*) is the leading expert consensus, signed by core circadian researchers including Brainard, Cajochen, Czeisler, and Lockley. It uses **melanopic EDI** (melanopic equivalent daylight illuminance, CIE S 026:2018) and recommends:
 
-| 时段 | 建议 melanopic EDI（眼位垂直面） |
+| Period | Recommended melanopic EDI (vertical, at the eye) |
 |---|---|
-| 白天 | **≥ 250 lux** |
-| 就寝前 3 小时 | **≤ 10 lux** |
-| 睡眠期间 | **≤ 1 lux**（夜间必要活动 ≤ 10 lux） |
+| Daytime | **≥ 250 lux** |
+| 3 hours before bed | **≤ 10 lux** |
+| During sleep | **≤ 1 lux** (≤ 10 lux for necessary nighttime activity) |
 
-同时明确：白天的光**应当**富含接近黑视素作用光谱峰值的短波成分；傍晚的光则应当在该波段贫化。
+It also states that daytime light **should** be rich near the melanopsin peak, and evening light should be depleted in that band.
 
-**这直接决定了本软件的曲线形状：白天刻意不加黄。** 日间充足的短波光是稳定生物钟的正向输入，全天候暖色是帮倒忙。
+**That directly shapes this app’s curve: daytime is deliberately not yellowed.** Short-wavelength light by day is a positive circadian input; all-day warmth works against you.
 
-### 为什么必须同时降亮度
+### Why brightness must drop too
 
-Nagare, Plitnick & Figueiro (2019) 测试了 iPad 的「夜览」功能对褪黑素抑制的实际效果：Less Warm 档两小时后褪黑素下降 19%，More Warm 档下降 12% —— 两者差异在误差范围内，且**都没有统计学上显著优于不开夜览**。
+Nagare, Plitnick & Figueiro (2019) measured iPad Night Shift’s effect on melatonin: Less Warm cut melatonin 19% after two hours, More Warm 12% — within error of each other, and **neither was statistically better than no Night Shift**.
 
-结论是：**只改光谱、不降亮度，不足以避免褪黑素抑制。**
+Conclusion: **changing spectrum alone, without lowering intensity, is not enough to avoid melatonin suppression.**
 
-本软件因此把光谱与剂量同时纳入预设：睡前使用 4300 K ×0.55，模型相对输出约 42.6%；深夜使用 1900 K ×0.45，约 17.5%。这里的系数是叠加在系统背光之上的 LUT 衰减，不是硬件亮度；滑杆同时显示“系数”和模型“相对输出”。
+Presets therefore combine spectrum and dose: bedtime 4300 K ×0.55 (~42.6% relative model output); deep night 1900 K ×0.45 (~17.5%). The factor is LUT attenuation on top of system backlight, not hardware brightness. Sliders show both the factor and model “relative output.”
 
-### 波长选择
+### Wavelength choice
 
-黑视素（melanopsin）在 ipRGC 上的作用光谱峰值约 480 nm，经晶状体前滤过后在视网膜上的有效峰值约 **490 nm** —— 这是褪黑素抑制和昼夜相位偏移的主要输入通道。程序内置的曲线用 Govardovskii A1 视色素模板（λmax = 490 nm）生成，自检验证峰值落在 490 nm。
+Melanopsin on ipRGCs peaks near 480 nm; after pre-retinal filtering the effective peak is about **490 nm** — the main channel for melatonin suppression and circadian phase shift. The built-in curve uses a Govardovskii A1 visual-pigment template (λmax = 490 nm); self-test confirms the peak at 490 nm.
 
-夜间干预研究普遍采用**截止 550 nm 以下**的琥珀色滤片。Burkhart & Phelps (2009) 和 Shechter et al. (2018) 的随机对照试验显示，睡前 2 小时佩戴琥珀镜片能改善主观和客观（活动记录仪）睡眠指标。本软件深夜档默认 1900 K，此时蓝通道衰减接近 100%，与「只留长波」的思路一致。
+Night intervention studies commonly use amber filters that **cut below ~550 nm**. RCTs by Burkhart & Phelps (2009) and Shechter et al. (2018) found better subjective and objective (actigraphy) sleep after wearing amber lenses for 2 hours before bed. Amber’s deep-night default is 1900 K, where blue-channel attenuation approaches 100%, consistent with “long wavelengths only.”
 
-### 傍晚为什么也要降亮度
+### Why evening dimming exists
 
-ISO 9241-303 建议在 500 lx 水平照度下屏幕亮度取 100–150 cd/m²。而低照度环境下的研究给出的舒适区间要低得多（约 20–75 cd/m² 对应 13–62 lx 环境照度）。天黑了屏幕还维持正午亮度，是傍晚视觉不适的主要来源之一 —— 这就是「黄昏」过渡段存在的理由。
+ISO 9241-303 suggests 100–150 cd/m² for screens at 500 lx horizontal illuminance. Comfort bands under low light are much lower (~20–75 cd/m² for ~13–62 lx). Keeping noon-level screen brightness after dark is a major source of evening discomfort — hence the dusk transition.
 
 ---
 
-## 功能说明
+## Features
 
-### 智能模式
+### Smart mode
 
-按作息锚点（起床 / 就寝）自动排班：
+Scheduled from wake / bedtime anchors:
 
-| 阶段 | 时机 | 默认值 |
+| Phase | When | Default |
 |---|---|---|
-| 白天 | 起床 → 就寝前 3 小时 | 6500 K ×1.00 |
-| 黄昏 | 日落起（若早于上一行边界） | 平滑到约 5280 K ×0.84 |
-| 睡前 | 就寝前 3 小时起，渐变 90 分钟后保持 | 4300 K ×0.55 |
-| 深夜助眠 | 就寝起，渐变 45 分钟后保持 | 1900 K ×0.45，无额外调暗 |
-| 拂晓 | 起床前 30 分钟 | 拉回白天值 |
+| Day | Wake → 3 h before bed | 6500 K ×1.00 |
+| Dusk | From sunset (if earlier than the boundary above) | Smooth to ~5280 K ×0.84 |
+| Bedtime | From 3 h before bed; 90 min ramp then hold | 4300 K ×0.55 |
+| Deep-night sleep aid | From bedtime; 45 min ramp then hold | 1900 K ×0.45, no extra dimming |
+| Dawn | 30 min before wake | Return to day values |
 
-所有过渡用 smoothstep，色温在 mired 空间插值（这才符合人眼对色温变化的感知线性）。
+Transitions use smoothstep; CCT interpolates in mired space (perceptually linear for color temperature).
 
-### 日出日落来源
+### Sunrise / sunset sources
 
-四选一，默认第二个：
+Four options; default is the second:
 
-| 来源 | 说明 |
+| Source | Notes |
 |---|---|
-| 关闭 | 只按起床 / 就寝时间排班 |
-| **跟随系统外观**（默认） | macOS「外观 - 自动」在日落时切深色。监听 `AppleInterfaceThemeChangedNotification` 即可反推日落时刻。**不需要定位权限、不耗电。** 前提是系统设置里外观选了「自动」 |
-| 使用定位 | CoreLocation 只取一次坐标缓存到本地，之后全部本地计算，不会持续定位 |
-| 手动坐标 | 自己填经纬度，0.1° 精度即可（误差 < 1 分钟） |
+| Off | Schedule from wake / bedtime only |
+| **Follow system appearance** (default) | macOS Appearance → Auto switches to Dark at sunset. Listening for `AppleInterfaceThemeChangedNotification` infers sunset. **No location permission, no continuous power cost.** Requires Appearance set to Auto |
+| Use location | CoreLocation fetches coordinates once, caches locally; all later math is local |
+| Manual coordinates | Enter lat/lon; 0.1° is enough (error < 1 minute) |
 
-日出日落用 NOAA Solar Calculator 算法本地计算。自检对照结果：
+Sunrise/sunset use the NOAA Solar Calculator locally. Self-test checks:
 
-| 地点 / 日期 | 本程序 | 参考值 |
+| Place / date | This app | Reference |
 |---|---|---|
-| 格林尼治 2025-06-21 | 日出 03:42、日落 20:20 UTC | 03:43、20:21 |
-| 格林尼治 2025-12-21 | 日出 08:03、日落 15:52 UTC | 08:04、15:53 |
-| 北京 2025-03-20 | 日出 06:18、日落 18:25 CST | 06:19、18:26 |
+| Greenwich 2025-06-21 | Sunrise 03:42, sunset 20:20 UTC | 03:43, 20:21 |
+| Greenwich 2025-12-21 | Sunrise 08:03, sunset 15:52 UTC | 08:04, 15:53 |
+| Beijing 2025-03-20 | Sunrise 06:18, sunset 18:25 CST | 06:19, 18:26 |
 
-### 手动模式
+### Manual mode
 
-色温（1800–6500 K）、LUT 系数、额外调暗三个滑块；手动默认 4500 K ×0.80。夜间色温范围为 1800–4500 K。夜间助眠开着时，进入深夜窗口仍会自动切到更保守的值。
+Sliders for CCT (1800–6500 K), LUT factor, and extra dimming; manual defaults 4500 K ×0.80. Night CCT range is 1800–4500 K. With night sleep aid on, entering the deep-night window still switches to more conservative values.
 
-### 实时指标
+### Live metrics
 
-菜单里显示当前设置对应的：
+The menu shows, for the current settings:
 
-- **melanopic 输出** —— 驱动褪黑素抑制的那部分光，相对原生白点满亮度的比例
-- **相对输出** —— LUT 与覆盖层共同作用后的明视觉模型输出
-- **蓝通道衰减** —— LUT 与覆盖层共同作用后的模型衰减
+- **Melanopic output** — light that drives melatonin suppression, relative to native white at full brightness
+- **Relative output** — photopic model output after LUT and overlay
+- **Blue-channel attenuation** — model attenuation after LUT and overlay
 
-数值基于典型 LED 背光 sRGB 面板的光谱模型。**它们只描述相对屏幕输出，用于横向比较，不是硬件亮度、lux、nits 或绝对 mEDI。**
+Values use a spectral model of a typical LED-backlit sRGB panel. **They describe relative screen output for comparison only — not hardware brightness, lux, nits, or absolute mEDI.**
 
-参考数值：
+Reference numbers:
 
-| 档位 | melanopic 输出 | 相对输出 | 假设系统背光 30 / 120 / 400 nits |
+| Preset | Melanopic output | Relative output | Assumed backlight 30 / 120 / 400 nits |
 |---|---|---|---|
-| 白天 6500 K ×1.00 | 99.9% | 100% | 30 / 120 / 400 nits |
-| 睡前 4300 K ×0.55 | 32.8% | 42.6% | 12.8 / 51.1 / 170.4 nits |
-| 深夜 1900 K ×0.45 | 5.8% | 17.5% | 5.2 / 20.9 / 69.8 nits |
+| Day 6500 K ×1.00 | 99.9% | 100% | 30 / 120 / 400 nits |
+| Bedtime 4300 K ×0.55 | 32.8% | 42.6% | 12.8 / 51.1 / 170.4 nits |
+| Deep night 1900 K ×0.45 | 5.8% | 17.5% | 5.2 / 20.9 / 69.8 nits |
 
-绝对亮度一栏只是给定背光值的演算，不是运行时测量或保证。
+Absolute-brightness columns are scenarios for a given backlight, not runtime measurements or guarantees.
 
 ---
 
-## 自检
+## Self-tests
 
 ```bash
-swift run Amber --selftest             # 色度学、黑视素曲线、日出日落、24 小时排班走查
-swift run Amber --compare-presets      # 比较 v1/v2 预设并验证相对指标与背光情景
-swift run Amber --apply 2700 0.62      # 端到端验证 LUT 写入精度，并确认还原
-swift run Amber --restore-test         # 验证还原对显示器校准无损
-swift run Amber --render-ui out.png    # 把菜单界面离屏渲染成 PNG
-python3 Scripts/check-localization.py  # 四语 key 一致性 + 语言码与构建产物核对
+swift run Amber --selftest             # Color science, melanopsin curve, solar times, 24 h schedule walk-through
+swift run Amber --compare-presets      # Compare v1/v2 presets; relative metrics and backlight scenarios
+swift run Amber --apply 2700 0.62      # End-to-end LUT write accuracy + restore
+swift run Amber --restore-test         # Confirm restore does not damage display calibration
+swift run Amber --render-ui out.png    # Offscreen-render the menu UI to PNG
+python3 Scripts/check-localization.py  # Four-locale key parity + locale codes vs build product
 ```
 
-`check-localization.py` 里那条「语言码 vs 构建产物」的检查有真实来由：源码目录是 `Resources/zh-Hans.lproj`，但 SwiftPM 打进 `Amber_Amber.bundle` 时会把名字**转成小写** `zh-hans.lproj`。`Bundle.path(forResource:ofType:)` 按精确字符串匹配资源表，大小写对不上就返回 nil，中文界面会静默退化成显示原始 key —— 编译不报错，只有切到中文才看得见。所以必须对着**构建产物**核对，而不是对着源码目录。
+The “locale code vs build product” check in `check-localization.py` exists for a real reason: the source directory is `Resources/zh-Hans.lproj`, but SwiftPM lowercases it to `zh-hans.lproj` inside `Amber_Amber.bundle`. `Bundle.path(forResource:ofType:)` matches the resource table by exact string; a case mismatch returns nil and the Chinese UI silently falls back to raw keys — no compile error, only visible when you switch to Chinese. Always check the **build product**, not the source tree.
 
-`--render-ui` 不需要 accessibility 权限也不用手点菜单栏：把真实的 `MenuContentView` 挂到窗口上跑完整布局再截图，能抓到编译期发现不了的布局问题（内容溢出、控件宽度不足、颜色对比度不够）。
+`--render-ui` needs neither Accessibility permission nor clicking the menu bar: it hosts the real `MenuContentView`, runs full layout, and screenshots — catching overflow, narrow controls, and contrast issues that compile-time checks miss.
 
-`--restore-test` 值得说明：它先人为写入一条带 S 形的非线性假校准曲线，跑完整个「抓基线 → 施加 → 还原」循环后逐点比对整张表，并与「只写入再读回」的对照组做差，剥离表长重采样噪声。
+`--restore-test` writes a nonlinear fake calibration with an S-curve, runs the full “capture baseline → apply → restore” loop, compares the whole table pointwise, and subtracts a write-then-read control to isolate table-length resampling noise.
 
-**这个测试是有来由的：** 最初的实现用 `CGDisplayRestoreColorSyncSettings()` 还原，实测发现它会把内建 XDR 屏上系统加载的校准曲线直接抹成线性斜坡，且不会自行恢复 —— 等于永久破坏用户的显示器校准直到重新登录。现在改为写回启动时抓取的原始 LUT，归因误差 0.000000。
-
----
-
-## 已知限制
-
-- **别同时开系统「夜览」**，两者会叠加。程序每 15 分钟会检查 LUT 有没有被外部程序覆写，被覆写时会把对方的表当作新基线重新接管 —— 但这只是止损，不是好的使用方式。
-- Amber 不知道系统背光的绝对值，因此“30 nits 背光下深夜输出不低于 5 nits”只是诊断情景，无法运行时强制保证。
-- 环境光可能主导眼位总剂量；相对 melanopic 指标只描述屏幕模型，不代表房间总光或绝对 mEDI。
-- 暴露时长也是剂量的一部分。Wood et al. 的平板实验中，单独使用最高亮度平板 1 小时尚未显著抑制褪黑素，2 小时后达到显著；Amber 本次不追踪使用时长。
-- LUT 修改不会出现在截图和屏幕录制里。
-- 极少数采集卡 / 虚拟显示器不支持写 LUT，程序会自动回落到覆盖窗口。
-- 覆盖窗口层级在 `CGShieldingWindowLevel` 之上，会盖住系统弹窗（但点击穿透，不影响操作）。
-- 开机自启依赖 `SMAppService`，需要 app 已签名（`build.sh` 会做临时签名）且位于稳定路径，建议装到 `/Applications`。
+**Why that test exists:** an early implementation called `CGDisplayRestoreColorSyncSettings()`, which on built-in XDR panels wiped the system-loaded calibration to a linear ramp and did not restore it — permanently breaking the user’s display calibration until re-login. Restore now writes back the original LUT captured at launch; attributable error 0.000000.
 
 ---
 
-## 代码结构
+## Known limitations
+
+- **Do not run system Night Shift at the same time** — they stack. Every 15 minutes Amber checks whether something else overwrote the LUT and, if so, adopts that table as the new baseline — damage control, not a good setup.
+- Amber does not know absolute system backlight, so “≥ 5 nits at night under 30 nits backlight” is a diagnostic scenario, not a runtime guarantee.
+- Room light can dominate dose at the eye; relative melanopic metrics describe the screen model only, not room total light or absolute mEDI.
+- Exposure duration is part of dose. In Wood et al.’s tablet study, one hour at max brightness alone did not significantly suppress melatonin; two hours did. Amber does not track usage time.
+- LUT changes do not appear in screenshots or screen recordings.
+- A few capture cards / virtual displays cannot write LUTs; the app falls back to an overlay.
+- The overlay sits above `CGShieldingWindowLevel` and can cover system alerts (clicks pass through).
+- Launch-at-login uses `SMAppService`; the app must be signed (`build.sh` ad-hoc signs) and at a stable path — prefer `/Applications`.
+
+---
+
+## Code layout
 
 ```
 Sources/Amber/
-  main.swift              入口，先处理诊断参数
-  AmberApp.swift          MenuBarExtra + AppDelegate + 信号处理
-  Diagnostics.swift       自检 / 验证工具（selftest、apply、restore-test、compare-presets、render-ui）
-  Localization.swift      四语字符串表加载与格式化
+  main.swift              Entry; handles diagnostic flags first
+  AmberApp.swift          MenuBarExtra + AppDelegate + signal handling
+  Diagnostics.swift       Self-test / verification tools
+  Localization.swift      Four-locale string tables and formatting
   Core/
-    ColorScience.swift    CIE 色匹配函数、普朗克轨迹、黑视素作用光谱、melanopic 指标
-    SolarClock.swift      NOAA 日出日落算法
-    SolarProvider.swift   三种日照信息来源的统一出口
-    Schedule.swift        时间 → 光照目标（纯函数）+ 自适应步进
-    Settings.swift        持久化，宽容解码（升级不丢配置）
-    GammaController.swift LUT 读写、基线管理、无损还原、覆写检测
-    OverlayController.swift 覆盖窗口（仅额外调暗 / 回落时使用）
-    Engine.swift          编排 + 低功耗定时 + 系统事件
+    ColorScience.swift    CIE CMFs, Planckian locus, melanopsin, melanopic metrics
+    SolarClock.swift      NOAA sunrise/sunset
+    SolarProvider.swift   Unified solar info sources
+    Schedule.swift        Time → light target (pure) + adaptive stepping
+    Settings.swift        Persistence with tolerant decoding
+    GammaController.swift LUT I/O, baselines, lossless restore, overwrite detection
+    OverlayController.swift Overlay (extra dim / fallback only)
+    Engine.swift          Orchestration + low-power timing + system events
   UI/
-    MenuContentView.swift 菜单界面
+    MenuContentView.swift Menu UI
   Resources/
     {en,fr,es,zh-Hans}.lproj/Localizable.strings
 Scripts/
-  check-localization.py   本地化完整性校验
+  check-localization.py   Localization integrity checks
 ```
 
-`Schedule.evaluate` 和 `ColorScience` 全部是纯函数，不碰系统 API，可以单独验证 —— 这也是自检能覆盖核心逻辑的原因。
+`Schedule.evaluate` and `ColorScience` are pure functions with no system APIs — that is why self-tests can cover the core logic.
 
 ---
 
-## 参考文献
+## References
 
 - Brown TM, Brainard GC, Cajochen C, et al. (2022). Recommendations for daytime, evening, and nighttime indoor light exposure to best support physiology, sleep, and wakefulness in healthy adults. *PLOS Biology* 20(3): e3001571. https://doi.org/10.1371/journal.pbio.3001571
 - Singh S, Downie LE, Anderson AJ, et al. (2023). Blue-light filtering spectacle lenses for visual performance, sleep, and macular health in adults. *Cochrane Database of Systematic Reviews* 8: CD013244. https://doi.org/10.1002/14651858.CD013244.pub2
@@ -230,26 +235,26 @@ Scripts/
 - CIE S 026/E:2018. *System for Metrology of Optical Radiation for ipRGC-Influenced Responses to Light.*
 - Govardovskii VI, Fyhrquist N, Reuter T, et al. (2000). In search of the visual pigment template. *Visual Neuroscience* 17(4): 509–528.
 - Wyman C, Sloan PP, Shirley P (2013). Simple analytic approximations to the CIE XYZ color matching functions. *Journal of Computer Graphics Techniques* 2(2): 1–11.
-- Kim YS, et al. (1996). 普朗克轨迹三次多项式近似（1667–25000 K）。
+- Kim YS, et al. (1996). Cubic polynomial approximation of the Planckian locus (1667–25000 K).
 - American Academy of Ophthalmology. *Should You Be Worried About Blue Light?* https://www.aao.org/eye-health/tips-prevention/should-you-be-worried-about-blue-light
 - ISO 9241-303:2011. *Ergonomics of human-system interaction — Requirements for electronic visual displays.*
 
 ---
 
-## 参与贡献
+## Contributing
 
-改动前请先跑通这三样，它们覆盖了这个项目最容易回归的地方：
+Before changing code, run these three — they cover the easiest regressions:
 
 ```bash
 swift build && swift run Amber --selftest && python3 Scripts/check-localization.py
 ```
 
-改光照参数时，务必用 `--compare-presets` 看一眼改动对 **melanopic 剂量**的净影响。这个项目踩过的最大的坑就是：照着一篇论文的结论调色温，却没算改完之后的剂量往哪边走 —— 视觉疲劳文献和昼夜节律文献优化的是**不同终点**，两者的最优解经常相反。
+When changing light parameters, always check `--compare-presets` for the net effect on **melanopic dose**. The biggest pitfall this project hit: tuning CCT from one paper without recomputing dose afterward — visual-fatigue and circadian literature optimize **different endpoints**, and their optima often conflict.
 
-新增界面文案要同时补齐 `en` / `fr` / `es` / `zh-Hans` 四份 `Localizable.strings`，缺一条就会在对应语言里显示原始 key。
+New UI copy must be added to all four `Localizable.strings` files (`en` / `fr` / `es` / `zh-Hans`); a missing key shows as the raw key in that locale.
 
-## 许可证
+## License
 
 [MIT](LICENSE)
 
-本项目不是医疗器械，也不提供医学建议。所有参数是基于公开文献的**工程起点**，不是临床阈值。个体对夜间光的敏感度差异可超过一个数量级（Phillips et al., 2019），有睡眠障碍或眼科疾病请咨询专业人士。
+This project is not a medical device and does not give medical advice. Parameters are **engineering starting points** from public literature, not clinical thresholds. Individual sensitivity to nighttime light can vary by more than an order of magnitude (Phillips et al., 2019). For sleep or eye conditions, see a professional.
