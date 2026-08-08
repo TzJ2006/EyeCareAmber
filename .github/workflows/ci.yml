@@ -27,6 +27,11 @@ jobs:
       - name: 本地化完整性
         run: python3 Scripts/check-localization.py
 
+      # 翻译文档最常见的失效是「只改了一边」：命令、参数、实测数字
+      # 在一份里更新了，另一份还停在旧值。语言无关的部分必须对得上。
+      - name: 两份 README 同步
+        run: python3 Scripts/check-readme-parity.py
+
       # 必须跑 debug 产物：自检靠 assert()，release 下 assert 会被整个编译掉，
       # 跑 release 二进制等于什么都没验。
       - name: 自检（多时区）

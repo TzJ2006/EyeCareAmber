@@ -171,6 +171,7 @@ swift run Amber --apply 2700 0.62      # End-to-end LUT write accuracy + restore
 swift run Amber --restore-test         # Confirm restore does not damage display calibration
 swift run Amber --render-ui out.png    # Offscreen-render the menu UI to PNG
 python3 Scripts/check-localization.py  # Four-locale key parity + locale codes vs build product
+python3 Scripts/check-readme-parity.py  # Keep README.md and README.zh-Hans.md in sync
 ```
 
 The “locale code vs build product” check in `check-localization.py` exists for a real reason: the source directory is `Resources/zh-Hans.lproj`, but SwiftPM lowercases it to `zh-hans.lproj` inside `Amber_Amber.bundle`. `Bundle.path(forResource:ofType:)` matches the resource table by exact string; a case mismatch returns nil and the Chinese UI silently falls back to raw keys — no compile error, only visible when you switch to Chinese. Always check the **build product**, not the source tree.

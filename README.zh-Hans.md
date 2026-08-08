@@ -171,6 +171,7 @@ swift run Amber --apply 2700 0.62      # 端到端验证 LUT 写入精度，并�
 swift run Amber --restore-test         # 验证还原对显示器校准无损
 swift run Amber --render-ui out.png    # 把菜单界面离屏渲染成 PNG
 python3 Scripts/check-localization.py  # 四语 key 一致性 + 语言码与构建产物核对
+python3 Scripts/check-readme-parity.py  # 两份 README 的命令、参数、数字保持同步
 ```
 
 `check-localization.py` 里那条「语言码 vs 构建产物」的检查有真实来由：源码目录是 `Resources/zh-Hans.lproj`，但 SwiftPM 打进 `Amber_Amber.bundle` 时会把名字**转成小写** `zh-hans.lproj`。`Bundle.path(forResource:ofType:)` 按精确字符串匹配资源表，大小写对不上就返回 nil，中文界面会静默退化成显示原始 key —— 编译不报错，只有切到中文才看得见。所以必须对着**构建产物**核对，而不是对着源码目录。
