@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 工具链版本
+        run: swift --version && xcodebuild -version
+
+      - name: 构建（debug）
+        run: swift build
+
+      # 本地化缺 key 编译不报错，只有切到那个语言才看得见 —— 必须自动查。
+      # 这一步同时核对语言码是否匹配 SwiftPM 产物里的 lproj 名（它会转小写）。
+      - name: 本地化完整性
+        run: python3 Scripts/check-localization.py
+
+      # 必须跑 debug 产物：自检靠 assert()，release 下 assert 会被整个编译掉，
+      # 跑 release 二进制等于什么都没验。
+      - name: 自检（多时区）
+        run: |
+          set -euo pipefail
+          test -x .build/debug/Amber
+          for tz in UTC Asia/Shanghai Asia/Kolkata America/New_York Pacific/Auckland; do
+            echo "── TZ=$tz"
+            if ! TZ="$tz" ./.build/debug/Amber --selftest > /tmp/selftest.txt 2>&1; then
+              cat /tmp/selftest.txt; exit 1
+            fi
+            # assert 之外还有些检查只打印 ✗ 而不中断，这里兜住。
+            if grep -q '✗' /tmp/selftest.txt; then cat /tmp/selftest.txt; exit 1; fi
+            grep -E '✓' /tmp/selftest.txt
+          done
+
+      - name: 打包 .app
+        run: ./build.sh
+
+      - name: 校验产物
+        run: |
+          set -euo pipefail
+          APP=build/Amber.app
+          test -x "$APP/Contents/MacOS/Amber"
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --verify --strict "$APP"
+          for lang in en fr es zh-hans; do
+            test -f "$APP/Contents/Resources/Amber_Amber.bundle/$lang.lproj/Localizable.strings" \
+              || { echo "产物里缺少 $lang.lproj"; exit 1; }
+          done
+          echo "✓ 产物完整：$(du -sh "$APP" | cut -f1)，$(lipo -archs "$APP/Contents/MacOS/Amber")"
