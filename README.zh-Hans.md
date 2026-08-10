@@ -16,7 +16,7 @@
 到 [Releases](https://github.com/TzJ2006/EyeCareAmber/releases) 取通用二进制版本。
 
 ```bash
-unzip Amber-1.0.0-universal.zip
+unzip Amber-1.1.0-universal.zip
 mv Amber.app /Applications/
 xattr -dr com.apple.quarantine /Applications/Amber.app
 open /Applications/Amber.app

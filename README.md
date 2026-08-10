@@ -16,7 +16,7 @@ A menu-bar lighting tool for macOS 15+. Native on Apple Silicon. Steady-state CP
 Grab the universal build from [Releases](https://github.com/TzJ2006/EyeCareAmber/releases).
 
 ```bash
-unzip Amber-1.0.0-universal.zip
+unzip Amber-1.1.0-universal.zip
 mv Amber.app /Applications/
 xattr -dr com.apple.quarantine /Applications/Amber.app
 open /Applications/Amber.app
