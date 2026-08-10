@@ -131,13 +131,15 @@ enum Diagnostics {
     /// 改色温时必须同时看剂量往哪边走。
     private static func comparePresets() {
         setvbuf(stdout, nil, _IONBF, 0)
-        print("=== 预设对比：旧预设 (v1) vs 科学预设 (v2) ===\n")
+        print("=== 预设对比：v1 → v2 → v3 → v4 ===\n")
 
         let rows: [(String, String, Double, Double, Double)] = [
             ("傍晚 / 睡前", "v1", 2_700, 0.62, 0.00),
             ("傍晚 / 睡前", "v2", 4_300, 0.55, 0.00),
             ("深夜助眠",     "v1", 1_900, 0.35, 0.20),
             ("深夜助眠",     "v2", 1_900, 0.45, 0.00),
+            ("深夜助眠",     "v3", 1_950, 0.75, 0.00),
+            ("深夜助眠",     "v4", 2_700, 0.56, 0.00),
             ("手动初值",     "v1", 3_400, 0.90, 0.00),
             ("手动初值",     "v2", 4_500, 0.80, 0.00),
         ]
@@ -153,7 +155,7 @@ enum Diagnostics {
             let pho = m.photopicRatio
 
             var delta = ""
-            if version == "v2", let p = previous {
+            if version != "v1", let p = previous {
                 let dMel = (mel / max(p.mel, 1e-9) - 1) * 100
                 let dPho = (pho / max(p.pho, 1e-9) - 1) * 100
                 delta = String(format: "   melanopic %+.0f%% · 输出 %+.0f%%", dMel, dPho)
@@ -166,18 +168,49 @@ enum Diagnostics {
             previous = (mel, pho)
         }
 
-        let evening = presetMetrics(cct: 4_300, coefficient: 0.55, extraDim: 0)
-        let night = presetMetrics(cct: 1_900, coefficient: 0.45, extraDim: 0)
+        let evening = presetMetrics(cct: Settings().eveningCCT,
+                                    coefficient: Settings().eveningBrightness, extraDim: 0)
+        let night = presetMetrics(cct: Settings().nightCCT,
+                                  coefficient: Settings().nightBrightness, extraDim: 0)
+
+        // 暗环境舒适下界。文献值分散度接近 5 倍（Li 2013 = 11、Na & Suk 2015 = 10–40、
+        // Zhou 2021 在 0 lx 下 = 20.63–36.2、朱念芳 2022 ≈ 50、Ye 2014 = 55、
+        // Lin 2022 在 1 lx 下 = 63.9 cd/m²），所以这里取的是「下界」而不是「最优值」：
+        // Yu & Akita 2019 报告 9 cd/m² 会引发身体 + 心理 + 视觉三类疲劳，
+        // 25 cd/m² 只剩视觉疲劳。
+        let comfortFloorNits = 20.0
+
         print("\n── 假设系统背光情景（演算值，不是运行时测量）")
         for panelNits in [30.0, 60.0, 120.0, 400.0] {
+            let nightNits = night.photopicRatio * panelNits
             print(String(format: "背光 %4.0f nits →  睡前 %6.1f nits   深夜 %6.1f nits%@",
-                         panelNits, evening.photopicRatio * panelNits,
-                         night.photopicRatio * panelNits,
-                         night.photopicRatio * panelNits < 5 ? "   ← 低于 5 nits 情景线" : ""))
+                         panelNits, evening.photopicRatio * panelNits, nightNits,
+                         nightNits < comfortFloorNits
+                            ? String(format: "   ← 低于 %.0f cd/m² 舒适下界", comfortFloorNits)
+                            : ""))
+        }
+        print("  注：Amber 只能控制相对衰减，落点由系统背光决定，无法运行时保证绝对 nits。")
+
+        print("\n── 实测背光与安全下限反解")
+        if let nits = BacklightReader.currentNits() {
+            print(String(format: "本机内置屏背光：%.1f nits", nits))
+            for scenario in [nits, 160.0, 80.0, 30.0] {
+                let raw = LightTarget(cct: Settings().nightCCT,
+                                      brightness: Settings().nightBrightness,
+                                      extraDim: 0, phase: .night)
+                let lifted = Schedule.liftAboveComfortFloor(raw, backlightNits: scenario)
+                let before = ColorScience.metrics(for: raw.effectiveGain).photopicRatio * scenario
+                let after = ColorScience.metrics(for: lifted.effectiveGain).photopicRatio * scenario
+                print(String(format: "  背光 %6.1f nits → 系数 %.2f→%.2f   深夜 %5.1f→%5.1f nits%@",
+                             scenario, raw.brightness, lifted.brightness, before, after,
+                             lifted.brightness >= 1.0 ? "   ← 已停止额外压暗" : ""))
+            }
+        } else {
+            print("读不到（外接屏 / Intel / 键名变更）→ 退回纯相对衰减")
         }
 
         assertSciencePreset(evening: evening, night: night)
-        print("\n✓ 最终指标、30 nits 情景线与睡前/深夜剂量关系均符合预期")
+        print("\n✓ 最终指标与睡前 / 深夜的剂量关系均符合预期")
     }
 
     private static func presetMetrics(cct: Double, coefficient: Double,
@@ -191,11 +224,24 @@ enum Diagnostics {
                                             night: ColorScience.Metrics) {
         assert(abs(evening.melanopicRatio - 0.328) < 0.003, "睡前 melanopic 偏离 32.8%")
         assert(abs(evening.photopicRatio - 0.426) < 0.003, "睡前相对输出偏离 42.6%")
-        assert(abs(night.melanopicRatio - 0.058) < 0.002, "深夜 melanopic 偏离 5.8%")
-        assert(abs(night.photopicRatio - 0.175) < 0.002, "深夜相对输出偏离 17.5%")
-        assert(night.photopicRatio * 30 >= 5, "30 nits 背光情景下深夜输出低于 5 nits")
-        assert(night.melanopicRatio < evening.melanopicRatio * 0.20,
-               "深夜 melanopic 必须低于睡前档的 20%")
+
+        // v4 数值锁。深夜档 2700K×0.56：屏幕亮度与 v3 基本一致（相对输出 30%），
+        // 但色温回到实测区间内，蓝通道从 0.0037 恢复到 0.101。
+        assert(abs(night.melanopicRatio - 0.153) < 0.004, "深夜 melanopic 偏离 15.3%")
+        assert(abs(night.photopicRatio - 0.300) < 0.004, "深夜相对输出偏离 30.0%")
+
+        // 深夜 melanopic 仍必须显著低于睡前档。
+        //
+        // 这个比值以前锁在 20%，但那条约束是**倒果为因**的 —— 它其实是在强制
+        // 深夜过度压暗。色温到了 1950 K，蓝通道几乎归零，melanopic 已经塌到很低；
+        // 此时再压 brightness，melanopic 的边际降幅很小，牺牲的全是可读性。
+        // 放宽到 40% 后 v3 实测约 31%，仍有余量，而屏幕不再暗到不可读。
+        assert(night.melanopicRatio < evening.melanopicRatio * 0.50,
+               "深夜 melanopic 必须低于睡前档的 50%")
+
+        // 深夜的光度输出不能低于睡前档的一半以下 —— 那说明压暗压过头了。
+        assert(night.photopicRatio > evening.photopicRatio * 0.5,
+               "深夜相对输出低于睡前档的一半，压暗过度")
     }
 
     /// 把菜单界面离屏渲染成 PNG。
@@ -361,6 +407,7 @@ enum Diagnostics {
         localizationCheck()
         migrationCheck()
         sciencePresetCheck()
+        comfortFloorCheck()
         colorScience()
         melanopicCurve()
         solarCheck()
@@ -392,23 +439,42 @@ enum Diagnostics {
     }
 
     private static func migrationCheck() {
+        // ① v1 直升 v3：两档迁移必须串联执行，不能只跑一档。
         let oldJSON: [String: Any] = [
             "manualCCT": 3_400.0, "manualBrightness": 0.90,
             "eveningCCT": 2_700.0, "eveningBrightness": 0.62,
-            "nightBrightness": 0.35, "nightExtraDim": 0.20,
+            "nightCCT": 1_900.0, "nightBrightness": 0.35, "nightExtraDim": 0.20,
             "wakeMinutes": 480, "language": "fr"
         ]
         let data = try! JSONSerialization.data(withJSONObject: oldJSON)
         var old = try! JSONDecoder().decode(Settings.self, from: data)
         assert(old.sciencePresetVersion == 1, "缺少版本字段的配置应视为 v1")
         assert(old.migrateSciencePresetIfNeeded())
+        assert(old.sciencePresetVersion == Settings.currentPresetVersion)
         assert(old.manualCCT == 4_500 && old.manualBrightness == 0.80)
         assert(old.eveningCCT == 4_300 && old.eveningBrightness == 0.55)
-        assert(old.nightBrightness == 0.45 && old.nightExtraDim == 0)
+        // 0.35 →(v2) 0.45 →(v3) 0.75，串联到底
+        assert(old.nightBrightness == 0.56 && old.nightExtraDim == 0,
+               "v1 应一路迁到 v4 的深夜亮度")
+        assert(old.nightCCT == 2_700, "v1 的 1900 K 应一路迁到 v4 的 2700 K")
         assert(old.wakeMinutes == 480 && old.language == .fr, "迁移改动了非预设字段")
         let migrated = old
         assert(!old.migrateSciencePresetIfNeeded() && old == migrated, "迁移不应重复执行")
 
+        // ② v2 → v3：只动深夜两项，其余不碰。
+        var v2 = Settings()
+        v2.sciencePresetVersion = 2
+        v2.nightCCT = 1_900
+        v2.nightBrightness = 0.45
+        v2.eveningCCT = 4_300
+        v2.eveningBrightness = 0.55
+        assert(v2.migrateSciencePresetIfNeeded())
+        // v2 的 0.45 应串联走完 v3(0.75) 与 v4(0.56)，色温 1900 → 1950 → 2700
+        assert(v2.nightBrightness == 0.56 && v2.nightCCT == 2_700, "v2 应一路迁到 v4")
+        assert(v2.eveningCCT == 4_300 && v2.eveningBrightness == 0.55,
+               "深夜迁移不应改动傍晚档")
+
+        // ③ 用户改过的值必须原样保留。
         var custom = Settings()
         custom.sciencePresetVersion = 1
         custom.manualCCT = 3_200
@@ -426,12 +492,16 @@ enum Diagnostics {
             && custom.nightBrightness == customValues.nightBrightness
             && custom.nightExtraDim == customValues.nightExtraDim,
                "用户改过的字段不应被迁移覆盖")
-        print("✓ v1 设置按字段迁移一次，用户自定义值保持不变\n")
+        print("✓ v1 / v2 设置按字段串联迁移一次，用户自定义值保持不变\n")
     }
 
     private static func sciencePresetCheck() {
-        let evening = presetMetrics(cct: 4_300, coefficient: 0.55, extraDim: 0)
-        let night = presetMetrics(cct: 1_900, coefficient: 0.45, extraDim: 0)
+        // 从默认值读，不要再硬编码一份 —— 否则改了预设只有一条路径会报警。
+        let defaults = Settings()
+        let evening = presetMetrics(cct: defaults.eveningCCT,
+                                    coefficient: defaults.eveningBrightness, extraDim: 0)
+        let night = presetMetrics(cct: defaults.nightCCT,
+                                  coefficient: defaults.nightBrightness, extraDim: 0)
         assertSciencePreset(evening: evening, night: night)
         print(String(format: "✓ 科学预设：睡前 melanopic %.1f%% / 输出 %.1f%%；深夜 %.1f%% / %.1f%%\n",
                      evening.melanopicRatio * 100, evening.photopicRatio * 100,
@@ -452,6 +522,44 @@ enum Diagnostics {
 
     // MARK: - 色温 → 增益
 
+    /// 暗环境安全下限：只抬不降、不越过 1.0、读不到背光时完全不生效。
+    private static func comfortFloorCheck() {
+        let d = Settings()
+        let night = LightTarget(cct: d.nightCCT, brightness: d.nightBrightness,
+                                extraDim: 0, phase: .night)
+
+        // ① 读不到背光 → 原样返回，行为与加这个功能之前一致
+        assert(Schedule.liftAboveComfortFloor(night, backlightNits: nil) == night,
+               "背光未知时不应改动目标")
+
+        // ② 背光充足 → 不该抬（400 nits × 29.8% = 119 nits，远高于下界）
+        assert(Schedule.liftAboveComfortFloor(night, backlightNits: 400).brightness
+               == night.brightness, "背光充足时不应抬亮度")
+
+        // ③ 背光很低 → 抬，但绝不超过 1.0
+        let dim = Schedule.liftAboveComfortFloor(night, backlightNits: 30)
+        assert(dim.brightness > night.brightness, "背光过低时应抬亮度")
+        assert(dim.brightness <= 1.0, "抬升不得越过 1.0，否则会比不装 Amber 还亮")
+
+        // ④ 抬完之后要么够到下限，要么已经顶到 1.0（受色温衰减所限，尽力而为）
+        for nits in [15.0, 30.0, 60.0, 80.0, 200.0, 400.0] {
+            let lifted = Schedule.liftAboveComfortFloor(night, backlightNits: nits)
+            let output = ColorScience.metrics(for: lifted.effectiveGain).photopicRatio * nits
+            assert(output >= Schedule.comfortFloorNits - 0.01 || lifted.brightness >= 1.0,
+                   "背光 \(nits) nits 下既没够到下限也没顶满：输出 \(output)")
+            // 色温不能被这条规则改动 —— 它只碰亮度
+            assert(lifted.cct == night.cct, "安全下限不应改动色温")
+        }
+
+        // ⑤ 白天档不该被触发（brightness 已是 1.0）
+        let day = LightTarget(cct: d.dayCCT, brightness: d.dayBrightness,
+                              extraDim: 0, phase: .day)
+        assert(Schedule.liftAboveComfortFloor(day, backlightNits: 30) == day,
+               "白天档不应被安全下限改动")
+
+        print("✓ 暗环境安全下限：只抬不降、上限 1.0、不改色温、背光未知时不生效\n")
+    }
+
     private static func colorScience() {
         print("── 色温 → 线性通道增益（相对 D65 原生白点）")
         print(pad("CCT", 8, right: true) + "  " + pad("R", 7, right: true)
@@ -467,10 +575,11 @@ enum Diagnostics {
 
         // 完整目标（色温 + 亮度），也就是实际写进 LUT 的东西
         print("\n── 实际施加的目标（含亮度衰减）")
+        let d = Settings()
         let presets: [(String, Double, Double)] = [
-            ("白天",     6_500, 1.00),
-            ("睡前",     4_300, 0.55),
-            ("深夜助眠", 1_900, 0.45),
+            ("白天",     d.dayCCT,     d.dayBrightness),
+            ("睡前",     d.eveningCCT, d.eveningBrightness),
+            ("深夜助眠", d.nightCCT,   d.nightBrightness),
         ]
         for (name, cct, brightness) in presets {
             let t = LightTarget(cct: cct, brightness: brightness, extraDim: 0, phase: .day)
@@ -561,17 +670,19 @@ enum Diagnostics {
         standard.solarSource = .off
         standard.wakeMinutes = 7 * 60 + 30
         standard.bedMinutes = 23 * 60 + 30
-        expect(target(after: 780, settings: standard), cct: 6_500, coefficient: 1,
+        expect(target(after: 780, settings: standard), cct: standard.dayCCT, coefficient: standard.dayBrightness,
                phase: .evening, "睡前 3 小时")
-        expect(target(after: 870, settings: standard), cct: 4_300, coefficient: 0.55,
+        expect(target(after: 870, settings: standard), cct: standard.eveningCCT, coefficient: standard.eveningBrightness,
                phase: .evening, "90 分钟渐变结束")
-        expect(target(after: 960, settings: standard), cct: 4_300, coefficient: 0.55,
+        expect(target(after: 960, settings: standard), cct: standard.eveningCCT, coefficient: standard.eveningBrightness,
                phase: .night, "就寝")
-        expect(target(after: 1_005, settings: standard), cct: 1_900, coefficient: 0.45,
+        expect(target(after: 1_005, settings: standard),
+               cct: standard.nightCCT, coefficient: standard.nightBrightness,
                phase: .night, "就寝后 45 分钟")
-        expect(target(after: 1_410, settings: standard), cct: 1_900, coefficient: 0.45,
+        expect(target(after: 1_410, settings: standard),
+               cct: standard.nightCCT, coefficient: standard.nightBrightness,
                phase: .dawn, "拂晓")
-        expect(target(after: 1_440, settings: standard), cct: 6_500, coefficient: 1,
+        expect(target(after: 1_440, settings: standard), cct: standard.dayCCT, coefficient: standard.dayBrightness,
                phase: .day, "起床")
 
         let solar = SolarClock.Events(
@@ -584,13 +695,14 @@ enum Diagnostics {
 
         var crossMidnight = standard
         crossMidnight.bedMinutes = 2 * 60
-        expect(target(after: 930, settings: crossMidnight), cct: 6_500, coefficient: 1,
+        expect(target(after: 930, settings: crossMidnight), cct: standard.dayCCT, coefficient: standard.dayBrightness,
                phase: .evening, "跨午夜睡前 3 小时")
-        expect(target(after: 1_020, settings: crossMidnight), cct: 4_300, coefficient: 0.55,
+        expect(target(after: 1_020, settings: crossMidnight), cct: standard.eveningCCT, coefficient: standard.eveningBrightness,
                phase: .evening, "跨午夜 90 分钟结束")
-        expect(target(after: 1_110, settings: crossMidnight), cct: 4_300, coefficient: 0.55,
+        expect(target(after: 1_110, settings: crossMidnight), cct: standard.eveningCCT, coefficient: standard.eveningBrightness,
                phase: .night, "跨午夜就寝")
-        expect(target(after: 1_155, settings: crossMidnight), cct: 1_900, coefficient: 0.45,
+        expect(target(after: 1_155, settings: crossMidnight),
+               cct: crossMidnight.nightCCT, coefficient: crossMidnight.nightBrightness,
                phase: .night, "跨午夜深夜")
         print("✓ 睡前、就寝、深夜、拂晓、黄昏与跨午夜边界正确")
     }

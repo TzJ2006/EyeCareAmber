@@ -40,11 +40,11 @@
 "metrics.perceivedBrightness.hint" = "Salida de pantalla modelada tras la LUT y la superposición; no es brillo físico";
 "metrics.blueAttenuation" = "Reducción del canal azul";
 "metrics.blueAttenuation.hint" = "Reducción combinada modelada de la LUT y la superposición";
-"metrics.note" = "Solo son estimaciones relativas del modelo de pantalla: no son lux, nits ni mEDI absoluto. No incluyen la luz ambiental ni la duración.";
+"metrics.note" = "Solo son estimaciones relativas del modelo de pantalla: no son lux ni mEDI absoluto. No incluyen la luz ambiental ni la duración.";
 "advanced.title" = "Ajustes avanzados";
 "advanced.language" = "Idioma";
 "advanced.autoBrightness" = "Brillo automático";
-"advanced.autoBrightness.explanation" = "Activa el brillo automático de macOS. Amber solo aplica su curva horaria; las pantallas externas o sin brillo automático no se adaptan a la luz ambiental. Si la imagen queda muy oscura, sube el brillo del sistema o pausa Amber.";
+"advanced.autoBrightness.explanation" = "Mantén activado el brillo automático de macOS: el sensor de luz es suyo. En la pantalla integrada, Amber lee la retroiluminación resultante en nits y deja de atenuar cuando ya está bastante oscura. Las pantallas externas no se pueden leer.";
 "advanced.solarSource" = "Fuente de amanecer y atardecer";
 "advanced.launchAtLogin" = "Abrir al iniciar sesión";
 "advanced.forceOverlay" = "Forzar modo de superposición";
@@ -76,3 +76,12 @@
 "footer.untilTomorrow" = "Hasta despertar mañana";
 "footer.backHelp" = "Volver a la vista principal";
 "footer.quit" = "Salir";
+"phaseTune.title" = "Ajuste por fase";
+"phaseTune.caption" = "Bajar el brillo de día no tiene respaldo; un estudio encontró lo contrario (las pantallas más brillantes dieron menos fatiga visual entre 200 y 800 lx). Deja el día al brillo automático de macOS y usa esto solo en salas atípicas.";
+"phaseTune.dayBrightness" = "Brillo diurno";
+"phaseTune.dayColorTemperature" = "Temperatura de color diurna";
+"phaseTune.eveningBrightness" = "Brillo vespertino";
+"phaseTune.eveningColorTemperature" = "Temperatura de color vespertina";
+"advanced.backlight" = "Retroiluminación medida";
+"advanced.backlight.value" = "Pantalla integrada: %.0f nits. Por debajo de %.0f nits, Amber deja de atenuar, para no volver la pantalla menos legible que sin él.";
+"advanced.backlight.unavailable" = "No legible en esta pantalla (monitor externo o Mac Intel). Amber solo aplica atenuación relativa.";

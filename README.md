@@ -57,7 +57,9 @@ The overlay is used only for explicit “extra dimming” or when LUT is unavail
 
 ### Division of labor with system auto-brightness
 
-Keep macOS auto-brightness on. The system owns the ambient light sensor and hardware backlight. Amber does not read ALS or control system brightness; it only applies relative LUT attenuation on top of the current backlight. On external displays or with auto-brightness off, the schedule still runs but will not track ambient light. If the picture is too dark, raise system brightness or pause Amber.
+Keep macOS auto-brightness on. The system owns the ambient light sensor and hardware backlight. Amber does not read the ALS and never sets system brightness; it only applies relative LUT attenuation on top of the current backlight.
+
+On the built-in display Amber does read the resulting backlight, in nits, from `AppleARMBacklight` in the IORegistry. That closes the loop that relative attenuation alone cannot: the same ×0.75 factor is 119 nits at a 400-nit backlight and 8.9 nits at 30 nits, and the second one is below every published comfort floor. Once the screen is already dark enough, Amber stops dimming further — it never makes the display harder to read than leaving it off. External displays and Intel Macs have no such node, so there the time curve runs on relative attenuation only.
 
 ### Power design
 
@@ -98,21 +100,25 @@ It also states that daytime light **should** be rich near the melanopsin peak, a
 
 ### Why brightness must drop too
 
-Nagare, Plitnick & Figueiro (2019) measured iPad Night Shift’s effect on melatonin: Less Warm cut melatonin 19% after two hours, More Warm 12% — within error of each other, and **neither was statistically better than no Night Shift**.
+Nagare, Plitnick & Figueiro (2019) measured iPad Night Shift’s effect on melatonin. Screen brightness was held at maximum throughout. Less Warm (5997 K) suppressed melatonin 19% after two hours, More Warm (2837 K) 12% — no significant difference between the two settings, and **all conditions still suppressed melatonin significantly relative to the dim control**. The study had no Night-Shift-off arm, so it cannot say what Night Shift is worth against a native screen; what it does show is that moving the slider from coldest to warmest, at unchanged brightness, does not rescue you.
 
 Conclusion: **changing spectrum alone, without lowering intensity, is not enough to avoid melatonin suppression.**
 
-Presets therefore combine spectrum and dose: bedtime 4300 K ×0.55 (~42.6% relative model output); deep night 1900 K ×0.45 (~17.5%). The factor is LUT attenuation on top of system backlight, not hardware brightness. Sliders show both the factor and model “relative output.”
+Presets therefore combine spectrum and dose: bedtime 4300 K ×0.55 (~42.6% relative model output); deep night 2700 K ×0.56 (~30.0%). The factor is LUT attenuation on top of system backlight, not hardware brightness. Sliders show both the factor and model “relative output.”
+
+The night pair is chosen to satisfy both endpoints at once. Luminance is fixed first: about 30% relative output lands near 36 cd/m² at a typical dim-room backlight, matching the low-stimulus arm of Li et al. (2026) that improved DLMO, cortisol, subjective sleep, visual fatigue **and** cognition together — the one measured luminance where both endpoints move the right way. A screen that is too dim is itself a fatigue source (Yu & Akita 2019: 9 cd/m² provoked physical, psychological and visual fatigue; 25 cd/m² only visual).
+
+Colour temperature is then picked where the two cost curves cross. Holding that luminance, melanopic output falls roughly linearly as the screen warms, but the blue channel collapses: going from 2700 K down to 1950 K buys about 5 more points of melanopic reduction while the blue gain drops 27-fold, from 0.101 to 0.0037, which turns blue interface elements black. Going warmer than 2700 K is where you stop paying for what you get.
 
 ### Wavelength choice
 
 Melanopsin on ipRGCs peaks near 480 nm; after pre-retinal filtering the effective peak is about **490 nm** — the main channel for melatonin suppression and circadian phase shift. The built-in curve uses a Govardovskii A1 visual-pigment template (λmax = 490 nm); self-test confirms the peak at 490 nm.
 
-Night intervention studies commonly use amber filters that **cut below ~550 nm**. RCTs by Burkhart & Phelps (2009) and Shechter et al. (2018) found better subjective and objective (actigraphy) sleep after wearing amber lenses for 2 hours before bed. Amber’s deep-night default is 1900 K, where blue-channel attenuation approaches 100%, consistent with “long wavelengths only.”
+Night intervention studies commonly use amber filters that **cut below ~550 nm**. RCTs by Burkhart & Phelps (2009) and Shechter et al. (2018) found better subjective and objective (actigraphy) sleep after wearing amber lenses for 2 hours before bed. Amber’s deep-night default is 2700 K, the warmest colour temperature with direct melatonin data behind it (Nagare, Rea, Plitnick & Figueiro 2019 measured 18.4% suppression at 2700 K against 24.7% at 6500 K); the verified literature has nothing at all between about 3000 K and 4400 K. The sliders still reach 1950 K for anyone who wants maximum amber, and stop there because below about 1930 K the blue gain clamps to exactly zero and nothing further changes.
 
 ### Why evening dimming exists
 
-ISO 9241-303 suggests 100–150 cd/m² for screens at 500 lx horizontal illuminance. Comfort bands under low light are much lower (~20–75 cd/m² for ~13–62 lx). Keeping noon-level screen brightness after dark is a major source of evening discomfort — hence the dusk transition.
+ISO 9241-303 suggests 100–150 cd/m² for screens at 500 lx horizontal illuminance. Under low light the comfortable band is far lower, though the literature is not tight about where: published optima for dark rooms span roughly 20–65 cd/m², a fivefold spread across studies. Amber treats 20 cd/m² as a floor rather than a target. Keeping noon-level screen brightness after dark is a major source of evening discomfort — hence the dusk transition.
 
 ---
 
@@ -127,7 +133,7 @@ Scheduled from wake / bedtime anchors:
 | Day | Wake → 3 h before bed | 6500 K ×1.00 |
 | Dusk | From sunset (if earlier than the boundary above) | Smooth to ~5280 K ×0.84 |
 | Bedtime | From 3 h before bed; 90 min ramp then hold | 4300 K ×0.55 |
-| Deep-night sleep aid | From bedtime; 45 min ramp then hold | 1900 K ×0.45, no extra dimming |
+| Deep-night sleep aid | From bedtime; 45 min ramp then hold | 2700 K ×0.56, no extra dimming |
 | Dawn | 30 min before wake | Return to day values |
 
 Transitions use smoothstep; CCT interpolates in mired space (perceptually linear for color temperature).
@@ -153,7 +159,7 @@ Sunrise/sunset use the NOAA Solar Calculator locally. Self-test checks:
 
 ### Manual mode
 
-Sliders for CCT (1800–6500 K), LUT factor, and extra dimming; manual defaults 4500 K ×0.80. Night CCT range is 1800–4500 K. With night sleep aid on, entering the deep-night window still switches to more conservative values.
+Sliders for CCT (1950–6500 K), LUT factor, and extra dimming; manual defaults 4500 K ×0.80. Night CCT range is 1950–4500 K. With night sleep aid on, entering the deep-night window still switches to more conservative values.
 
 ### Live metrics
 
@@ -171,7 +177,7 @@ Reference numbers:
 |---|---|---|---|
 | Day 6500 K ×1.00 | 99.9% | 100% | 30 / 120 / 400 nits |
 | Bedtime 4300 K ×0.55 | 32.8% | 42.6% | 12.8 / 51.1 / 170.4 nits |
-| Deep night 1900 K ×0.45 | 5.8% | 17.5% | 5.2 / 20.9 / 69.8 nits |
+| Deep night 2700 K ×0.56 | 15.3% | 30.0% | 9.0 / 36.0 / 120.1 nits |
 
 Absolute-brightness columns are scenarios for a given backlight, not runtime measurements or guarantees.
 
@@ -201,8 +207,11 @@ The “locale code vs build product” check in `check-localization.py` exists f
 
 ## Known limitations
 
-- **Do not run system Night Shift at the same time** — they stack. Every 15 minutes Amber checks whether something else overwrote the LUT and, if so, adopts that table as the new baseline — damage control, not a good setup.
-- Amber does not know absolute system backlight, so “≥ 5 nits at night under 30 nits backlight” is a diagnostic scenario, not a runtime guarantee.
+- **Do not run system Night Shift at the same time.** It works below the gamma layer, so it does not overwrite the LUT — the two warmings multiply instead, and the result is warmer than either intends. Tools that *do* fight over the same table are f.lux, Lunar, BetterDisplay and MonitorControl; every 15 minutes Amber checks whether one of them overwrote it and, if so, adopts that table as the new baseline — damage control, not a good setup.
+- Absolute nits are readable on Apple Silicon built-in displays only, and through an undocumented IORegistry key that Apple may rename. On external displays, on Intel Macs, or if that key moves, Amber falls back to relative attenuation and the comfort floor cannot be enforced.
+- Dimming through the LUT scales white but not black, so on an LCD the on-screen contrast ratio falls with the output factor. On the mini-LED XDR panels the loss is irrelevant; on a MacBook Air it is not.
+- Writing gamma tables makes macOS turn off HDR/EDR while Amber is active.
+- There are reports (FB18559786, FB19136488) of `CGSetDisplayTransferByTable` being silently ignored on Apple Silicon built-in displays while “Automatically adjust brightness” is on. It reproduces on some macOS builds and not others; `--apply` verifies by reading the table back, so run it if colours never change.
 - Room light can dominate dose at the eye; relative melanopic metrics describe the screen model only, not room total light or absolute mEDI.
 - Exposure duration is part of dose. In Wood et al.’s tablet study, one hour at max brightness alone did not significantly suppress melatonin; two hours did. Amber does not track usage time.
 - LUT changes do not appear in screenshots or screen recordings.
@@ -244,7 +253,7 @@ Scripts/
 ## References
 
 - Brown TM, Brainard GC, Cajochen C, et al. (2022). Recommendations for daytime, evening, and nighttime indoor light exposure to best support physiology, sleep, and wakefulness in healthy adults. *PLOS Biology* 20(3): e3001571. https://doi.org/10.1371/journal.pbio.3001571
-- Singh S, Downie LE, Anderson AJ, et al. (2023). Blue-light filtering spectacle lenses for visual performance, sleep, and macular health in adults. *Cochrane Database of Systematic Reviews* 8: CD013244. https://doi.org/10.1002/14651858.CD013244.pub2
+- Singh S, Keller PR, Busija L, McMillan P, Makrai E, Lawrenson JG, Hull CC, Downie LE (2023). Blue-light filtering spectacle lenses for visual performance, sleep, and macular health in adults. *Cochrane Database of Systematic Reviews* 8: CD013244. https://doi.org/10.1002/14651858.CD013244.pub2
 - Nagare R, Plitnick B, Figueiro MG (2019). Does the iPad Night Shift mode reduce melatonin suppression? *Lighting Research & Technology* 51(3): 373–383. https://doi.org/10.1177/1477153517748189
 - Wood B, Rea MS, Plitnick B, Figueiro MG (2013). Light level and duration of exposure determine the impact of self-luminous tablets on melatonin suppression. *Applied Ergonomics* 44(2): 237–240. https://doi.org/10.1016/j.apergo.2012.07.008
 - Burkhart K, Phelps JR (2009). Amber lenses to block blue light and improve sleep: a randomized trial. *Chronobiology International* 26(8): 1602–1612.

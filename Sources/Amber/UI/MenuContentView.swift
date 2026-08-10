@@ -12,6 +12,9 @@ struct MenuContentView: View {
     private enum Page { case main, advanced }
     @State private var page: Page
 
+    /// 时段微调默认折叠：这几个参数绝大多数人不该动。
+    @State private var phaseTuneExpanded = false
+
     /// 内容区固定高度。两个页面共用，保证切页时窗口尺寸不变。
     private static let contentHeight: CGFloat = 480
 
@@ -163,8 +166,66 @@ struct MenuContentView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            phaseTuning
         }
         .disabled(!engine.settings.enabled)
+    }
+
+    /// 白天 / 傍晚两档的微调。默认折叠 —— 这几个参数绝大多数人不该动，
+    /// 但此前它们在界面上根本够不着，想调也只能去改全局额外调暗（那会连白天一起压）。
+    private var phaseTuning: some View {
+        DisclosureGroup(isExpanded: $phaseTuneExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                SliderRow(title: tr("phaseTune.dayBrightness"),
+                          value: s.dayBrightness,
+                          range: Settings.dayBrightnessRange,
+                          defaultValue: Settings().dayBrightness,
+                          recommendedLabel: tr("control.recommended"),
+                          display: coefficientOutput(cct: engine.settings.dayCCT,
+                                                     coefficient: engine.settings.dayBrightness,
+                                                     extraDim: engine.settings.globalExtraDim),
+                          lowLabel: "60%", highLabel: "100%", compact: true)
+
+                SliderRow(title: tr("phaseTune.dayColorTemperature"),
+                          value: s.dayCCT,
+                          range: Settings.dayCCTRange,
+                          defaultValue: Settings().dayCCT,
+                          recommendedLabel: tr("control.recommended"),
+                          display: String(format: "%.0f K", engine.settings.dayCCT),
+                          lowLabel: "5000", highLabel: "6500", compact: true)
+
+                Divider().padding(.vertical, 2)
+
+                SliderRow(title: tr("phaseTune.eveningBrightness"),
+                          value: s.eveningBrightness,
+                          range: Settings.eveningBrightnessRange,
+                          defaultValue: Settings().eveningBrightness,
+                          recommendedLabel: tr("control.recommended"),
+                          display: coefficientOutput(cct: engine.settings.eveningCCT,
+                                                     coefficient: engine.settings.eveningBrightness,
+                                                     extraDim: engine.settings.globalExtraDim),
+                          lowLabel: "40%", highLabel: "90%", compact: true)
+
+                SliderRow(title: tr("phaseTune.eveningColorTemperature"),
+                          value: s.eveningCCT,
+                          range: Settings.eveningCCTRange,
+                          defaultValue: Settings().eveningCCT,
+                          recommendedLabel: tr("control.recommended"),
+                          display: String(format: "%.0f K", engine.settings.eveningCCT),
+                          lowLabel: "4000", highLabel: "5500", compact: true)
+
+                Text(tr("phaseTune.caption"))
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 8)
+        } label: {
+            Text(tr("phaseTune.title"))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var manualControls: some View {
@@ -209,13 +270,13 @@ struct MenuContentView: View {
 
             if engine.settings.nightAssistEnabled {
                 SliderRow(title: tr("night.colorTemperature"), value: s.nightCCT,
-                          range: 1_800...4_500,
+                          range: Settings.nightCCTRange,
                           defaultValue: Settings().nightCCT,
                           recommendedLabel: tr("control.recommended"),
                           display: String(format: "%.0f K", engine.settings.nightCCT),
-                          lowLabel: "1800", highLabel: "4500", compact: true)
+                          lowLabel: "1950", highLabel: "4500", compact: true)
                 SliderRow(title: tr("night.brightness"), value: s.nightBrightness,
-                          range: 0.15...0.7,
+                          range: Settings.nightBrightnessRange,
                           defaultValue: Settings().nightBrightness,
                           recommendedLabel: tr("control.recommended"),
                           display: coefficientOutput(
@@ -223,7 +284,7 @@ struct MenuContentView: View {
                             coefficient: engine.settings.nightBrightness,
                             extraDim: max(engine.settings.nightExtraDim,
                                           engine.settings.globalExtraDim)),
-                          lowLabel: "15%", highLabel: "70%", compact: true)
+                          lowLabel: "15%", highLabel: "100%", compact: true)
             }
         }
         .disabled(!engine.settings.enabled)
@@ -281,6 +342,18 @@ struct MenuContentView: View {
                 Image(systemName: "sun.max")
             }
             .accessibilityLabel(tr("advanced.autoBrightness"))
+
+            Label {
+                Text(engine.backlightNits.map {
+                    tr("advanced.backlight.value", $0, Schedule.comfortFloorNits)
+                } ?? tr("advanced.backlight.unavailable"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "light.max")
+            }
+            .accessibilityLabel(tr("advanced.backlight"))
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(tr("advanced.solarSource")).font(.system(size: 11, weight: .medium))

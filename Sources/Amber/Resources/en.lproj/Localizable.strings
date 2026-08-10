@@ -40,11 +40,11 @@
 "metrics.perceivedBrightness.hint" = "Modeled screen output after LUT and overlay; not hardware brightness";
 "metrics.blueAttenuation" = "Blue-channel reduction";
 "metrics.blueAttenuation.hint" = "Modeled combined reduction from the LUT and overlay";
-"metrics.note" = "Relative screen-model estimates only—not lux, nits, or absolute mEDI. Room light and exposure duration are not included.";
+"metrics.note" = "Relative screen-model estimates only—not lux or absolute mEDI. Room light and exposure duration are not included.";
 "advanced.title" = "Advanced Settings";
 "advanced.language" = "Language";
 "advanced.autoBrightness" = "Automatic brightness";
-"advanced.autoBrightness.explanation" = "Enable macOS automatic brightness. Amber only applies its time curve; external displays or disabled automatic brightness are not ambient-light adjusted. If too dark, raise system brightness or pause Amber.";
+"advanced.autoBrightness.explanation" = "Keep macOS automatic brightness on—it owns the ambient light sensor. On the built-in display Amber reads the resulting backlight in nits and stops dimming once the screen is already dark enough. External displays cannot be read, so the time curve runs unadjusted.";
 "advanced.solarSource" = "Sunrise and sunset source";
 "advanced.launchAtLogin" = "Launch at login";
 "advanced.forceOverlay" = "Force overlay mode";
@@ -76,3 +76,12 @@
 "footer.untilTomorrow" = "Until tomorrow's wake time";
 "footer.backHelp" = "Back to main view";
 "footer.quit" = "Quit";
+"phaseTune.title" = "Phase fine-tuning";
+"phaseTune.caption" = "Lowering daytime brightness has no evidence behind it—one study found the opposite (brighter screens scored lower visual fatigue at 200–800 lx). Leave daytime to macOS automatic brightness; use these only for unusual rooms.";
+"phaseTune.dayBrightness" = "Daytime brightness";
+"phaseTune.dayColorTemperature" = "Daytime color temperature";
+"phaseTune.eveningBrightness" = "Evening brightness";
+"phaseTune.eveningColorTemperature" = "Evening color temperature";
+"advanced.backlight" = "Measured backlight";
+"advanced.backlight.value" = "Built-in display: %.0f nits. Below %.0f nits Amber stops dimming further, so it never makes the screen harder to read than leaving it off.";
+"advanced.backlight.unavailable" = "Not readable on this display (external monitor or Intel Mac). Amber applies relative attenuation only.";

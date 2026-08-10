@@ -28,6 +28,8 @@ final class Engine: ObservableObject {
     @Published private(set) var nextUpdate: Date?
     @Published private(set) var usingOverlayFallback = false
     @Published private(set) var displayCount = 0
+    /// 内置屏当前背光（nits）。外接屏 / Intel / 读取失败时为 nil。
+    @Published private(set) var backlightNits: Double?
     @Published var settings: Settings {
         didSet {
             guard settings != oldValue else { return }
@@ -91,7 +93,11 @@ final class Engine: ObservableObject {
         }
 
         let events = solar.events(on: now, settings: settings)
-        let result = Schedule.evaluate(at: now, settings: settings, solar: events)
+        // 内置屏能读到绝对背光，用它兜住「暗环境被压得过暗」的下限。
+        // 外接屏 / Intel 读不到，返回 nil，退回纯相对衰减。
+        backlightNits = BacklightReader.currentNits()
+        let result = Schedule.evaluate(at: now, settings: settings, solar: events,
+                                       backlightNits: backlightNits)
 
         // 顺手确认没被别的程序（系统「夜览」、其它显示工具）抢走 LUT。
         // 只读几个采样点，比一次定时器唤醒本身还便宜。

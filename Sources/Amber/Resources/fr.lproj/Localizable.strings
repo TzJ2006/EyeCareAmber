@@ -40,11 +40,11 @@
 "metrics.perceivedBrightness.hint" = "Sortie d’écran modélisée après LUT et superposition, pas la luminosité matérielle";
 "metrics.blueAttenuation" = "Réduction du canal bleu";
 "metrics.blueAttenuation.hint" = "Réduction combinée modélisée de la LUT et de la superposition";
-"metrics.note" = "Estimations relatives du modèle d’écran uniquement : ni lux, ni nits, ni mEDI absolu. La lumière ambiante et la durée d’exposition sont exclues.";
+"metrics.note" = "Estimations relatives du modèle d'écran uniquement : ni lux, ni mEDI absolu. La lumière ambiante et la durée d'exposition sont exclues.";
 "advanced.title" = "Réglages avancés";
 "advanced.language" = "Langue";
 "advanced.autoBrightness" = "Luminosité automatique";
-"advanced.autoBrightness.explanation" = "Activez la luminosité automatique de macOS. Amber applique seulement sa courbe horaire ; les écrans externes ou sans réglage automatique ne s’adaptent pas à la lumière ambiante. Si l’image est trop sombre, augmentez la luminosité système ou mettez Amber en pause.";
+"advanced.autoBrightness.explanation" = "Gardez la luminosité automatique de macOS activée : le capteur de lumière lui appartient. Sur l'écran intégré, Amber lit le rétroéclairage obtenu en nits et cesse d'assombrir dès que l'écran est assez sombre. Les écrans externes ne sont pas lisibles.";
 "advanced.solarSource" = "Source du lever et du coucher du soleil";
 "advanced.launchAtLogin" = "Ouvrir à la connexion";
 "advanced.forceOverlay" = "Forcer le mode superposition";
@@ -76,3 +76,12 @@
 "footer.untilTomorrow" = "Jusqu’au réveil de demain";
 "footer.backHelp" = "Retour à l’écran principal";
 "footer.quit" = "Quitter";
+"phaseTune.title" = "Réglage par phase";
+"phaseTune.caption" = "Baisser la luminosité de jour n'a aucun fondement : une étude montre l'inverse (les écrans plus lumineux fatiguent moins entre 200 et 800 lx). Laissez le jour à la luminosité automatique de macOS ; n'utilisez ceci que pour des pièces atypiques.";
+"phaseTune.dayBrightness" = "Luminosité de jour";
+"phaseTune.dayColorTemperature" = "Température de couleur de jour";
+"phaseTune.eveningBrightness" = "Luminosité du soir";
+"phaseTune.eveningColorTemperature" = "Température de couleur du soir";
+"advanced.backlight" = "Rétroéclairage mesuré";
+"advanced.backlight.value" = "Écran intégré : %.0f nits. En dessous de %.0f nits, Amber cesse d'assombrir, afin de ne jamais rendre l'écran moins lisible que sans lui.";
+"advanced.backlight.unavailable" = "Illisible sur cet écran (moniteur externe ou Mac Intel). Amber n'applique qu'une atténuation relative.";

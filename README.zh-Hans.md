@@ -57,7 +57,9 @@ cd EyeCareAmber && ./build.sh --install
 
 ### 与系统自动亮度的分工
 
-请开启 macOS 自动亮度。系统负责环境光传感器与硬件背光，Amber 不读取 ALS、不控制系统亮度，只在当前背光上叠加 LUT 相对衰减。外接屏或关闭自动亮度时仍执行时间曲线，但不会随环境光调整；画面过暗时应提高系统亮度或暂停 Amber。
+请开启 macOS 自动亮度。系统负责环境光传感器与硬件背光，Amber 不读取 ALS、也从不设置系统亮度，只在当前背光上叠加 LUT 相对衰减。
+
+但在内置屏上，Amber 会从 IORegistry 的 `AppleARMBacklight` 读取由此得到的背光 nits。这补上了纯相对衰减补不上的那一环：同样的 ×0.75 系数，在 400 nits 背光下是 119 nits，在 30 nits 背光下只有 8.9 nits，而后者低于所有已发表的舒适下界。屏幕已经够暗时 Amber 就停止继续压暗 —— 保证任何情况下都不会比不开它更难看清。外接屏与 Intel Mac 没有这个节点，那里只按相对衰减执行时间曲线。
 
 ### 功耗设计
 
@@ -98,21 +100,25 @@ Brown et al. (2022, *PLOS Biology*) 是目前最权威的专家共识，由 Brai
 
 ### 为什么必须同时降亮度
 
-Nagare, Plitnick & Figueiro (2019) 测试了 iPad 的「夜览」功能对褪黑素抑制的实际效果：Less Warm 档两小时后褪黑素下降 19%，More Warm 档下降 12% —— 两者差异在误差范围内，且**都没有统计学上显著优于不开夜览**。
+Nagare, Plitnick & Figueiro (2019) 测试了 iPad 的「夜览」功能对褪黑素抑制的实际效果，全程把屏幕亮度锁在最大档：Less Warm 档（5997 K）两小时后褪黑素下降 19%，More Warm 档（2837 K）下降 12% —— 两档之间无显著差异，而且**相对昏暗对照，所有条件都仍造成了显著抑制**。该研究没有「关闭夜览」这一组，所以它说不了夜览相对原生屏值多少；它能说明的是：在亮度不变的前提下，把滑块从最冷端拉到最暖端救不了你。
 
 结论是：**只改光谱、不降亮度，不足以避免褪黑素抑制。**
 
-本软件因此把光谱与剂量同时纳入预设：睡前使用 4300 K ×0.55，模型相对输出约 42.6%；深夜使用 1900 K ×0.45，约 17.5%。这里的系数是叠加在系统背光之上的 LUT 衰减，不是硬件亮度；滑杆同时显示“系数”和模型“相对输出”。
+本软件因此把光谱与剂量同时纳入预设：睡前使用 4300 K ×0.55，模型相对输出约 42.6%；深夜使用 2700 K ×0.56，约 30.0%。这里的系数是叠加在系统背光之上的 LUT 衰减，不是硬件亮度；滑杆同时显示“系数”和模型“相对输出”。
+
+深夜这一对值是为了同时满足两个终点而定的。先定住亮度：约 30% 相对输出，在常见的昏暗房间背光下落在 36 cd/m² 附近，正对上 Li et al. (2026) 的低刺激条件 —— 那一档在 DLMO、皮质醇、主观睡眠、视觉疲劳**和**认知表现上同时改善，是唯一一个两个终点都往好处走的实测亮度。而屏幕过暗本身就是疲劳来源（Yu & Akita 2019：9 cd/m² 引发身体、心理与视觉三类疲劳，25 cd/m² 只剩视觉疲劳）。
+
+色温则取在两条代价曲线的交叉点。固定上述亮度后，屏幕越暖 melanopic 输出近似线性下降，蓝通道却是断崖式的：从 2700 K 再降到 1950 K，melanopic 只再降约 5 个百分点，蓝通道增益却从 0.101 塌到 0.0037，相差 27 倍，蓝色界面元素直接变黑。比 2700 K 更暖，就是付出的多、拿到的少了。
 
 ### 波长选择
 
 黑视素（melanopsin）在 ipRGC 上的作用光谱峰值约 480 nm，经晶状体前滤过后在视网膜上的有效峰值约 **490 nm** —— 这是褪黑素抑制和昼夜相位偏移的主要输入通道。程序内置的曲线用 Govardovskii A1 视色素模板（λmax = 490 nm）生成，自检验证峰值落在 490 nm。
 
-夜间干预研究普遍采用**截止 550 nm 以下**的琥珀色滤片。Burkhart & Phelps (2009) 和 Shechter et al. (2018) 的随机对照试验显示，睡前 2 小时佩戴琥珀镜片能改善主观和客观（活动记录仪）睡眠指标。本软件深夜档默认 1900 K，此时蓝通道衰减接近 100%，与「只留长波」的思路一致。
+夜间干预研究普遍采用**截止 550 nm 以下**的琥珀色滤片。Burkhart & Phelps (2009) 和 Shechter et al. (2018) 的随机对照试验显示，睡前 2 小时佩戴琥珀镜片能改善主观和客观（活动记录仪）睡眠指标。本软件深夜档默认 2700 K —— 这是有直接褪黑素数据支撑的最暖色温（Nagare, Rea, Plitnick & Figueiro 2019 实测 2700 K 抑制 18.4%，6500 K 为 24.7%）；已核实的文献在约 3000 K 到 4400 K 之间是完全空白的。滑杆仍可拖到 1950 K 供想要最大琥珀的人使用，停在那里是因为低于约 1930 K 蓝通道增益已被 clamp 成精确的 0，再往下不会有任何变化。
 
 ### 傍晚为什么也要降亮度
 
-ISO 9241-303 建议在 500 lx 水平照度下屏幕亮度取 100–150 cd/m²。而低照度环境下的研究给出的舒适区间要低得多（约 20–75 cd/m² 对应 13–62 lx 环境照度）。天黑了屏幕还维持正午亮度，是傍晚视觉不适的主要来源之一 —— 这就是「黄昏」过渡段存在的理由。
+ISO 9241-303 建议在 500 lx 水平照度下屏幕亮度取 100–150 cd/m²。低照度环境下的舒适区间要低得多，但文献对「低到哪里」并不统一：已发表的暗环境最优值大致散布在 20–65 cd/m²，跨研究相差接近五倍。Amber 因此把 20 cd/m² 当作下界而非目标。天黑了屏幕还维持正午亮度，是傍晚视觉不适的主要来源之一 —— 这就是「黄昏」过渡段存在的理由。
 
 ---
 
@@ -127,7 +133,7 @@ ISO 9241-303 建议在 500 lx 水平照度下屏幕亮度取 100–150 cd/m²。
 | 白天 | 起床 → 就寝前 3 小时 | 6500 K ×1.00 |
 | 黄昏 | 日落起（若早于上一行边界） | 平滑到约 5280 K ×0.84 |
 | 睡前 | 就寝前 3 小时起，渐变 90 分钟后保持 | 4300 K ×0.55 |
-| 深夜助眠 | 就寝起，渐变 45 分钟后保持 | 1900 K ×0.45，无额外调暗 |
+| 深夜助眠 | 就寝起，渐变 45 分钟后保持 | 2700 K ×0.56，无额外调暗 |
 | 拂晓 | 起床前 30 分钟 | 拉回白天值 |
 
 所有过渡用 smoothstep，色温在 mired 空间插值（这才符合人眼对色温变化的感知线性）。
@@ -153,7 +159,7 @@ ISO 9241-303 建议在 500 lx 水平照度下屏幕亮度取 100–150 cd/m²。
 
 ### 手动模式
 
-色温（1800–6500 K）、LUT 系数、额外调暗三个滑块；手动默认 4500 K ×0.80。夜间色温范围为 1800–4500 K。夜间助眠开着时，进入深夜窗口仍会自动切到更保守的值。
+色温（1950–6500 K）、LUT 系数、额外调暗三个滑块；手动默认 4500 K ×0.80。夜间色温范围为 1950–4500 K。夜间助眠开着时，进入深夜窗口仍会自动切到更保守的值。
 
 ### 实时指标
 
@@ -171,7 +177,7 @@ ISO 9241-303 建议在 500 lx 水平照度下屏幕亮度取 100–150 cd/m²。
 |---|---|---|---|
 | 白天 6500 K ×1.00 | 99.9% | 100% | 30 / 120 / 400 nits |
 | 睡前 4300 K ×0.55 | 32.8% | 42.6% | 12.8 / 51.1 / 170.4 nits |
-| 深夜 1900 K ×0.45 | 5.8% | 17.5% | 5.2 / 20.9 / 69.8 nits |
+| 深夜 2700 K ×0.56 | 15.3% | 30.0% | 9.0 / 36.0 / 120.1 nits |
 
 绝对亮度一栏只是给定背光值的演算，不是运行时测量或保证。
 
@@ -201,8 +207,11 @@ python3 Scripts/check-readme-parity.py  # 两份 README 的命令、参数、数
 
 ## 已知限制
 
-- **别同时开系统「夜览」**，两者会叠加。程序每 15 分钟会检查 LUT 有没有被外部程序覆写，被覆写时会把对方的表当作新基线重新接管 —— 但这只是止损，不是好的使用方式。
-- Amber 不知道系统背光的绝对值，因此“30 nits 背光下深夜输出不低于 5 nits”只是诊断情景，无法运行时强制保证。
+- **别同时开系统「夜览」**。它工作在 gamma 层之下，并不会覆写 LUT —— 两者的变暖效果是相乘叠加，结果比任何一方想要的都更暖。真正会争抢同一张表的是 f.lux、Lunar、BetterDisplay 与 MonitorControl；程序每 15 分钟会检查 LUT 有没有被它们覆写，被覆写时会把对方的表当作新基线重新接管 —— 但这只是止损，不是好的使用方式。
+- 绝对 nits 只在 Apple Silicon 内置屏上可读，且依赖一个未公开、Apple 随时可能改名的 IORegistry 键。外接屏、Intel Mac，或该键位置变动时，Amber 退回纯相对衰减，舒适下界无法强制。
+- LUT 压暗只缩放白场、不动黑电平，所以 LCD 上屏幕实测对比度会随输出系数一起下降。mini-LED XDR 面板上这个损失可忽略，MacBook Air 上则不然。
+- 写 gamma 表会让 macOS 在 Amber 生效期间关闭 HDR/EDR。
+- 有报告（FB18559786、FB19136488）称「自动调节亮度」开启时，Apple Silicon 内置屏上的 `CGSetDisplayTransferByTable` 会被静默忽略。它在部分 macOS 构建上复现、部分不复现；`--apply` 会写完读回来比对，颜色一直没变化时请先跑它。
 - 环境光可能主导眼位总剂量；相对 melanopic 指标只描述屏幕模型，不代表房间总光或绝对 mEDI。
 - 暴露时长也是剂量的一部分。Wood et al. 的平板实验中，单独使用最高亮度平板 1 小时尚未显著抑制褪黑素，2 小时后达到显著；Amber 本次不追踪使用时长。
 - LUT 修改不会出现在截图和屏幕录制里。
@@ -244,7 +253,7 @@ Scripts/
 ## 参考文献
 
 - Brown TM, Brainard GC, Cajochen C, et al. (2022). Recommendations for daytime, evening, and nighttime indoor light exposure to best support physiology, sleep, and wakefulness in healthy adults. *PLOS Biology* 20(3): e3001571. https://doi.org/10.1371/journal.pbio.3001571
-- Singh S, Downie LE, Anderson AJ, et al. (2023). Blue-light filtering spectacle lenses for visual performance, sleep, and macular health in adults. *Cochrane Database of Systematic Reviews* 8: CD013244. https://doi.org/10.1002/14651858.CD013244.pub2
+- Singh S, Keller PR, Busija L, McMillan P, Makrai E, Lawrenson JG, Hull CC, Downie LE (2023). Blue-light filtering spectacle lenses for visual performance, sleep, and macular health in adults. *Cochrane Database of Systematic Reviews* 8: CD013244. https://doi.org/10.1002/14651858.CD013244.pub2
 - Nagare R, Plitnick B, Figueiro MG (2019). Does the iPad Night Shift mode reduce melatonin suppression? *Lighting Research & Technology* 51(3): 373–383. https://doi.org/10.1177/1477153517748189
 - Wood B, Rea MS, Plitnick B, Figueiro MG (2013). Light level and duration of exposure determine the impact of self-luminous tablets on melatonin suppression. *Applied Ergonomics* 44(2): 237–240. https://doi.org/10.1016/j.apergo.2012.07.008
 - Burkhart K, Phelps JR (2009). Amber lenses to block blue light and improve sleep: a randomized trial. *Chronobiology International* 26(8): 1602–1612.

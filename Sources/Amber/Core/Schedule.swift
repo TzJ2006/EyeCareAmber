@@ -92,8 +92,11 @@ enum Schedule {
     /// - Parameter solar: 当天的日出 / 日落。传 nil 就纯按作息锚点排班。
     ///   来源由 `SolarProvider` 决定（系统外观事件 / 定位 / 手填坐标），
     ///   这里刻意不关心 —— 保持这个函数是纯函数，方便验证。
+    /// - Parameter backlightNits: 当前系统背光的绝对输出。传 nil（外接屏 / Intel /
+    ///   读取失败）就退回纯相对衰减，行为与加入这个参数之前完全一致。
     static func evaluate(at now: Date, settings s: Settings,
                          solar: SolarClock.Events? = nil,
+                         backlightNits: Double? = nil,
                          calendar: Calendar = .current) -> ScheduleResult {
 
         guard s.enabled else {
@@ -114,10 +117,12 @@ enum Schedule {
                                 phase: .manual)
             // 手动模式下也尊重夜间助眠：进入深夜窗口就自动切过去。
             if s.nightAssistEnabled, inNightWindow(now, settings: s, calendar: calendar) {
-                let night = LightTarget(cct: min(s.nightCCT, s.manualCCT),
+                var night = LightTarget(cct: min(s.nightCCT, s.manualCCT),
                                         brightness: min(s.nightBrightness, s.manualBrightness),
                                         extraDim: max(s.nightExtraDim, s.globalExtraDim),
                                         phase: .night)
+                // 深夜档是自动切过去的，不是用户拖出来的，所以同样受下限保护。
+                night = liftAboveComfortFloor(night, backlightNits: backlightNits)
                 return ScheduleResult(target: night,
                                       nextUpdate: nextBoundary(after: now, settings: s, calendar: calendar),
                                       isRamping: false)
@@ -141,7 +146,8 @@ enum Schedule {
         let b = keys[index + 1]
 
         let flat = a.cct == b.cct && a.brightness == b.brightness && a.dim == b.dim
-        let target = sample(elapsed: elapsed, from: a, to: b, settings: s)
+        let target = liftAboveComfortFloor(sample(elapsed: elapsed, from: a, to: b, settings: s),
+                                           backlightNits: backlightNits)
 
         let segmentEnd = wake.addingTimeInterval(b.t * 60)
         let next: Date
@@ -155,6 +161,47 @@ enum Schedule {
         return ScheduleResult(target: target,
                               nextUpdate: max(next, now.addingTimeInterval(1)),
                               isRamping: !flat)
+    }
+
+    // MARK: - 暗环境安全下限
+
+    /// 暗环境舒适下界，cd/m²。
+    ///
+    /// 文献里「暗环境最优屏幕亮度」的分散度接近 5 倍（Li 2013 = 11、
+    /// Na & Suk 2015 = 10–40、Zhou 2021 在 0 lx 下 = 20.63–36.2、
+    /// 朱念芳 2022 ≈ 50、Ye 2014 = 55、Lin 2022 在 1 lx 下 = 63.9），
+    /// 所以这里取的是**下界**而不是最优值：Yu & Akita 2019 报告 9 cd/m² 会引发
+    /// 身体 + 心理 + 视觉三类疲劳，25 cd/m² 只剩视觉疲劳。取 20 留一点余量。
+    static let comfortFloorNits: Double = 20
+
+    /// 防止 Amber 把屏幕压到比「什么都不做」还难读。
+    ///
+    /// Amber 施加的是相对衰减，落到多少 nits 完全取决于系统背光。macOS 自动亮度
+    /// 在暗环境下会把背光压得很低（本机面板下限约 1 nit），此时再乘一个固定系数
+    /// 就是二次压制 —— 傍晚档 ×0.55 在 30 nits 背光下只剩 12.9 nits，深夜档更低。
+    ///
+    /// 这里的规则很克制：**只抬不降，且绝不超过 1.0**。
+    /// `brightness = 1.0` 的含义是「不额外压暗」，色温本身的衰减仍然保留。
+    /// 所以最坏情况下 Amber 退化成纯色温滤镜，永远不会比不装它更亮。
+    ///
+    /// - Parameter backlightNits: nil 时原样返回，行为与没有这个功能时一致。
+    static func liftAboveComfortFloor(_ target: LightTarget,
+                                      backlightNits: Double?) -> LightTarget {
+        guard let nits = backlightNits, nits > 0, target.brightness > 0 else { return target }
+
+        // photopicRatio 与 brightness 严格成正比，所以先取 brightness = 1 时的
+        // 单位输出（含色温衰减与覆盖层），再反解需要多少系数才能够到下限。
+        let unit = LightTarget(cct: target.cct, brightness: 1,
+                               extraDim: target.extraDim, phase: target.phase)
+        let unitOutput = ColorScience.metrics(for: unit.effectiveGain).photopicRatio
+        guard unitOutput > 0 else { return target }
+
+        let required = comfortFloorNits / (unitOutput * nits)
+        guard required > target.brightness else { return target }
+
+        var lifted = target
+        lifted.brightness = min(1.0, required)
+        return lifted
     }
 
     // MARK: - 插值与自适应步进

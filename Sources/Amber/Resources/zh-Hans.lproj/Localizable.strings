@@ -40,11 +40,11 @@
 "metrics.perceivedBrightness.hint" = "LUT 与覆盖层共同作用后的屏幕模型输出，不是硬件亮度";
 "metrics.blueAttenuation" = "蓝通道衰减";
 "metrics.blueAttenuation.hint" = "LUT 与覆盖层共同作用后的模型衰减";
-"metrics.note" = "仅为屏幕模型的相对估计，不是 lux、nits 或绝对 mEDI；不含环境光与暴露时长。";
+"metrics.note" = "仅为屏幕模型的相对估计，不是 lux 或绝对 mEDI；不含环境光与暴露时长。";
 "advanced.title" = "高级设置";
 "advanced.language" = "语言";
 "advanced.autoBrightness" = "自动亮度";
-"advanced.autoBrightness.explanation" = "请开启 macOS 自动亮度。Amber 只叠加时间曲线；外接屏或关闭自动亮度时不会随环境光调节。画面过暗时请提高系统亮度或暂停 Amber。";
+"advanced.autoBrightness.explanation" = "请保持 macOS 自动亮度开启，环境光传感器归系统管。内置屏上 Amber 会读取由此得到的背光 nits，屏幕已经够暗时就停止继续压暗。外接屏读不到，只按时间曲线运行。";
 "advanced.solarSource" = "日出日落来源";
 "advanced.launchAtLogin" = "开机自动启动";
 "advanced.forceOverlay" = "强制使用覆盖层";
@@ -76,3 +76,12 @@
 "footer.untilTomorrow" = "直到明天起床";
 "footer.backHelp" = "返回主界面";
 "footer.quit" = "退出";
+"phaseTune.title" = "时段微调";
+"phaseTune.caption" = "白天调暗屏幕并无证据支持，反而有反证（200–800 lx 下更亮的屏幕视觉疲劳更低）。日常请交给 macOS 自动亮度，这里只用于环境特殊时微调。";
+"phaseTune.dayBrightness" = "白天亮度";
+"phaseTune.dayColorTemperature" = "白天色温";
+"phaseTune.eveningBrightness" = "傍晚亮度";
+"phaseTune.eveningColorTemperature" = "傍晚色温";
+"advanced.backlight" = "实测背光";
+"advanced.backlight.value" = "内置屏 %.0f nits。低于 %.0f nits 时 Amber 会停止继续压暗，保证不会比不开它更难看清。";
+"advanced.backlight.unavailable" = "这块屏读不到（外接屏或 Intel Mac）。Amber 只施加相对衰减。";
