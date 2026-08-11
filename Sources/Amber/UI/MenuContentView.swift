@@ -333,20 +333,12 @@ struct MenuContentView: View {
                 .labelsHidden()
             }
 
-            Label {
-                Text(tr("advanced.autoBrightness.explanation"))
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                Image(systemName: "sun.max")
-            }
-            .accessibilityLabel(tr("advanced.autoBrightness"))
+            autoBrightnessControl
 
+            // 三态，不是两态。「读到了但还没证明这个读数会跟随」必须和
+            // 「读到了并且确认有效」分开 —— 前者不能把数字显示出来当实测值。
             Label {
-                Text(engine.backlightNits.map {
-                    tr("advanced.backlight.value", $0, Schedule.comfortFloorNits)
-                } ?? tr("advanced.backlight.unavailable"))
+                Text(backlightDescription)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -399,6 +391,50 @@ struct MenuContentView: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    private var backlightDescription: String {
+        if let nits = engine.backlightNits {
+            return tr("advanced.backlight.value", nits, Schedule.comfortFloorNits)
+        }
+        return BacklightReader.rawNitsForDiagnostics() == nil
+            ? tr("advanced.backlight.unavailable")
+            : tr("advanced.backlight.unverified")
+    }
+
+    /// 系统「自动调节亮度」开关。
+    ///
+    /// 它改的是 macOS 的设置，不是 Amber 的设置——所以状态每次都现读，绝不缓存成
+    /// 本地偏好；不支持的屏（外接屏 / 无 ALS）直接禁用并说明原因，而不是给一个
+    /// 点了没反应的开关。
+    private var autoBrightnessControl: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: Binding(
+                get: { engine.autoBrightnessEnabled ?? false },
+                set: { engine.setSystemAutoBrightness($0) }
+            )) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(tr("advanced.autoBrightness")).font(.system(size: 12))
+                    Text(tr("advanced.autoBrightness.system"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+            .disabled(engine.autoBrightnessEnabled == nil)
+
+            Label {
+                Text(engine.autoBrightnessEnabled == nil
+                     ? tr("advanced.autoBrightness.unsupported")
+                     : tr("advanced.autoBrightness.explanation"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "sun.max")
+            }
+            .accessibilityLabel(tr("advanced.autoBrightness"))
         }
     }
 

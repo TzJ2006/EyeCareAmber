@@ -16,7 +16,7 @@
 到 [Releases](https://github.com/TzJ2006/EyeCareAmber/releases) 取通用二进制版本。
 
 ```bash
-unzip Amber-1.1.0-universal.zip
+unzip Amber-1.1.1-universal.zip
 mv Amber.app /Applications/
 xattr -dr com.apple.quarantine /Applications/Amber.app
 open /Applications/Amber.app
@@ -57,9 +57,17 @@ cd EyeCareAmber && ./build.sh --install
 
 ### 与系统自动亮度的分工
 
-请开启 macOS 自动亮度。系统负责环境光传感器与硬件背光，Amber 不读取 ALS、也从不设置系统亮度，只在当前背光上叠加 LUT 相对衰减。
+请开启 macOS 自动亮度。系统负责环境光传感器与硬件背光，Amber 的正常运行路径不读取 ALS、也从不设置系统亮度，只在当前背光上叠加 LUT 相对衰减。
 
-但在内置屏上，Amber 会从 IORegistry 的 `AppleARMBacklight` 读取由此得到的背光 nits。这补上了纯相对衰减补不上的那一环：同样的 ×0.75 系数，在 400 nits 背光下是 119 nits，在 30 nits 背光下只有 8.9 nits，而后者低于所有已发表的舒适下界。屏幕已经够暗时 Amber 就停止继续压暗 —— 保证任何情况下都不会比不开它更难看清。外接屏与 Intel Mac 没有这个节点，那里只按相对衰减执行时间曲线。
+`--ambient` 是唯一会去读传感器的诊断命令，但它输出的是**未经标定、没有单位的原始读数** —— 没有和照度计比对过，所以它不是 lux，也不能当 lux 用。运行中的程序不消费这个值，界面上也不会显示它。
+
+但在内置屏上，Amber 会尝试从 IORegistry 的 `AppleARMBacklight` 读取由此得到的背光 nits。这个读数只要是活的，就补上了纯相对衰减补不上的那一环：同样的 ×0.75 系数，在 400 nits 背光下是 119 nits，在 30 nits 背光下只有 8.9 nits，而后者低于所有已发表的舒适下界。屏幕已经够暗时 Amber 就停止继续压暗 —— 保证任何情况下都不会比不开它更难看清。
+
+**但这个读数并非在每台 Mac 上都是活的。** 在一台 Mac16,7 / macOS 26.5.2 上它从不更新：遮住传感器后，macOS 一秒内就动了自己的亮度滑杆、屏幕肉眼可见地变化，而 `BrightnessMilliNits` 连续七小时逐字节不变，`brightness`、`rawBrightness`、`BrightnessMicroAmps` 同样冻结，`CurrentNits` 恒为 0。走 `backlight report / brightness report` 的 IOReport 通道拿到的是同一批死值，整个 IORegistry 再没有第二处发布 nits。该机报告 `new-backlight-architecture = Yes`，老键看来已经废弃。
+
+一个看起来合理的冻结值比没有值更糟，所以 Amber 给它加了闸门：只有在观察到它确实变化之后才采用；在那之前一律当作这块屏读不到，只按相对衰减执行时间曲线 —— 与外接屏、Intel Mac 的处理相同。
+
+这套分工只在系统那一侧确实开着时才成立，所以高级设置里带了一个开关。它通过 `DisplayServices` 直接读写 macOS 的“自动调节亮度”——就是“系统设置 → 显示器”里的那一项。界面上的状态永远是从系统回读的，不会缓存成 Amber 自己的偏好；没有环境光传感器的屏幕上开关会被禁用。Amber 依旧不读照度、也不自己设置背光：写背光只会和它刚交还回去的那个控制环打架。
 
 ### 功耗设计
 
@@ -114,11 +122,13 @@ Nagare, Plitnick & Figueiro (2019) 测试了 iPad 的「夜览」功能对褪黑
 
 黑视素（melanopsin）在 ipRGC 上的作用光谱峰值约 480 nm，经晶状体前滤过后在视网膜上的有效峰值约 **490 nm** —— 这是褪黑素抑制和昼夜相位偏移的主要输入通道。程序内置的曲线用 Govardovskii A1 视色素模板（λmax = 490 nm）生成，自检验证峰值落在 490 nm。
 
-夜间干预研究普遍采用**截止 550 nm 以下**的琥珀色滤片。Burkhart & Phelps (2009) 和 Shechter et al. (2018) 的随机对照试验显示，睡前 2 小时佩戴琥珀镜片能改善主观和客观（活动记录仪）睡眠指标。本软件深夜档默认 2700 K —— 这是有直接褪黑素数据支撑的最暖色温（Nagare, Rea, Plitnick & Figueiro 2019 实测 2700 K 抑制 18.4%，6500 K 为 24.7%）；已核实的文献在约 3000 K 到 4400 K 之间是完全空白的。滑杆仍可拖到 1950 K 供想要最大琥珀的人使用，停在那里是因为低于约 1930 K 蓝通道增益已被 clamp 成精确的 0，再往下不会有任何变化。
+夜间干预研究普遍采用**截止 550 nm 以下**的琥珀色滤片。Burkhart & Phelps (2009) 和 Shechter et al. (2018) 的随机对照试验显示，睡前 2 小时佩戴琥珀镜片能改善主观和客观（活动记录仪）睡眠指标。本软件深夜档默认 2700 K —— 这是有直接褪黑素数据支撑的最暖色温（Nagare, Rea, Plitnick & Figueiro 2019 报告 2700 K 抑制 18.4%，6500 K 为 24.7%，SEM 均为 1.0%）；已核实的文献在约 3000 K 到 4400 K 之间是完全空白的。这两个数要按本意读：它们是跨 40–1000 lux 眼位照度、0.5–3 小时全部条件的光谱主效应边际均值，样本为 18 名青少年与 23 名成人。屏幕达不到那个照度量级，所以它们支持的只是「同等条件下 2700 K 比 6500 K 少抑制」这个方向，不能用来推算屏幕的剂量。
+
+与之相对的是 Xie, Yu & Chen (2025) 在另一个终点上给出的反向结果：36 名受试者在 3 lux 与 450 lux 两种环境下，2800 K 的视觉疲劳**最高**，暗环境最优是 4500 K，办公照度下 4500 K 与 6500 K 都好。其摘要只字未提三个色温是否等亮度，这一点至今无法核实，所以该结论无法与亮度混杂因素分开。本软件默认仍保持 2700 K —— 一篇未被重复、且混杂未排除的研究，不足以翻转所有人的默认值 —— 但这个冲突是真实的，而且它是**两个不同终点之间**的冲突，不是同一个问题上的分歧。滑杆仍可拖到 1950 K 供想要最大琥珀的人使用，停在那里是因为低于约 1930 K 蓝通道增益已被 clamp 成精确的 0，再往下不会有任何变化。
 
 ### 傍晚为什么也要降亮度
 
-ISO 9241-303 建议在 500 lx 水平照度下屏幕亮度取 100–150 cd/m²。低照度环境下的舒适区间要低得多，但文献对「低到哪里」并不统一：已发表的暗环境最优值大致散布在 20–65 cd/m²，跨研究相差接近五倍。Amber 因此把 20 cd/m² 当作下界而非目标。天黑了屏幕还维持正午亮度，是傍晚视觉不适的主要来源之一 —— 这就是「黄昏」过渡段存在的理由。
+ISO 9241-303 建议在 500 lx 水平照度下屏幕亮度取 100–150 cd/m²。低照度环境下的舒适区间要低得多，但文献对「低到哪里」并不统一：已发表的暗环境最优值大致散布在 20–65 cd/m²，跨研究相差接近五倍。Amber 因此把 20 cd/m² 当作下界而非目标。 这个分散只针对接近全黑的房间；房间一亮，同一批文献就自相矛盾到三倍 —— Kim et al. (2017) 在 50 lx 给出的舒适下沿是 113 cd/m²，而 Zhou et al. (2021) 在同样照度下实测的最优值是 34.5 与 41.4 cd/m²。不存在与环境无关的下界。天黑了屏幕还维持正午亮度，是傍晚视觉不适的主要来源之一 —— 这就是「黄昏」过渡段存在的理由。
 
 ---
 
@@ -191,6 +201,8 @@ swift run Amber --compare-presets      # 比较 v1/v2 预设并验证相对指�
 swift run Amber --apply 2700 0.62      # 端到端验证 LUT 写入精度，并确认还原
 swift run Amber --restore-test         # 验证还原对显示器校准无损
 swift run Amber --render-ui out.png    # 把菜单界面离屏渲染成 PNG
+swift run Amber --auto-brightness      # 读取系统自动亮度；加 on/off 可写入
+swift run Amber --ambient --watch      # 把环境光原始读数记进 CSV；只读
 python3 Scripts/check-localization.py  # 四语 key 一致性 + 语言码与构建产物核对
 python3 Scripts/check-readme-parity.py  # 两份 README 的命令、参数、数字保持同步
 ```
@@ -208,7 +220,8 @@ python3 Scripts/check-readme-parity.py  # 两份 README 的命令、参数、数
 ## 已知限制
 
 - **别同时开系统「夜览」**。它工作在 gamma 层之下，并不会覆写 LUT —— 两者的变暖效果是相乘叠加，结果比任何一方想要的都更暖。真正会争抢同一张表的是 f.lux、Lunar、BetterDisplay 与 MonitorControl；程序每 15 分钟会检查 LUT 有没有被它们覆写，被覆写时会把对方的表当作新基线重新接管 —— 但这只是止损，不是好的使用方式。
-- 绝对 nits 只在 Apple Silicon 内置屏上可读，且依赖一个未公开、Apple 随时可能改名的 IORegistry 键。外接屏、Intel Mac，或该键位置变动时，Amber 退回纯相对衰减，舒适下界无法强制。
+- 绝对 nits 只在 Apple Silicon 内置屏上可读，依赖一个未公开、Apple 随时可能改名的 IORegistry 键，而且**在部分 Mac 上这个键是从不更新的开机快照**。Amber 只在观察到它变化之后才采用。外接屏、Intel Mac、该键位置变动、或读数冻结时，Amber 退回纯相对衰减，舒适下界无法强制。
+- 「自动调节亮度」开关同样走未公开接口（`DisplayServices` 的三个符号，用 `dlsym` 弱查找）。符号消失时该开关自动禁用，其余功能不受影响；也因为用到私有 API，Amber 不适合上架 Mac App Store。
 - LUT 压暗只缩放白场、不动黑电平，所以 LCD 上屏幕实测对比度会随输出系数一起下降。mini-LED XDR 面板上这个损失可忽略，MacBook Air 上则不然。
 - 写 gamma 表会让 macOS 在 Amber 生效期间关闭 HDR/EDR。
 - 有报告（FB18559786、FB19136488）称「自动调节亮度」开启时，Apple Silicon 内置屏上的 `CGSetDisplayTransferByTable` 会被静默忽略。它在部分 macOS 构建上复现、部分不复现；`--apply` 会写完读回来比对，颜色一直没变化时请先跑它。
@@ -237,6 +250,8 @@ Sources/Amber/
     Settings.swift        持久化，宽容解码（升级不丢配置）
     GammaController.swift LUT 读写、基线管理、无损还原、覆写检测
     OverlayController.swift 覆盖窗口（仅额外调暗 / 回落时使用）
+    BacklightReader.swift 读取内置屏当前背光 nits（IORegistry）
+    AutoBrightness.swift  读写系统「自动调节亮度」（DisplayServices，弱查找）
     Engine.swift          编排 + 低功耗定时 + 系统事件
   UI/
     MenuContentView.swift 菜单界面
@@ -255,6 +270,10 @@ Scripts/
 - Brown TM, Brainard GC, Cajochen C, et al. (2022). Recommendations for daytime, evening, and nighttime indoor light exposure to best support physiology, sleep, and wakefulness in healthy adults. *PLOS Biology* 20(3): e3001571. https://doi.org/10.1371/journal.pbio.3001571
 - Singh S, Keller PR, Busija L, McMillan P, Makrai E, Lawrenson JG, Hull CC, Downie LE (2023). Blue-light filtering spectacle lenses for visual performance, sleep, and macular health in adults. *Cochrane Database of Systematic Reviews* 8: CD013244. https://doi.org/10.1002/14651858.CD013244.pub2
 - Nagare R, Plitnick B, Figueiro MG (2019). Does the iPad Night Shift mode reduce melatonin suppression? *Lighting Research & Technology* 51(3): 373–383. https://doi.org/10.1177/1477153517748189
+- Zhou Y, Shi H, Chen Q-W, Ru T, Zhou G (2021). Investigation of the optimum display luminance of an LCD screen under different ambient illuminances in the evening. *Applied Sciences* 11(9): 4108. https://doi.org/10.3390/app11094108
+- Kim SR, Lee SH, Jeon DH, Kim JS, Lee SW (2017). Optimum display luminance dependence on ambient illuminance. *Optical Engineering* 56(1): 017110. https://doi.org/10.1117/1.OE.56.1.017110
+- Xie X, Yu S, Chen D (2025). Effects of screen color mode and color temperature on visual fatigue under different ambient illuminations. *International Journal of Human–Computer Interaction* 41(2): 821–833. https://doi.org/10.1080/10447318.2024.2305982
+- Nagare R, Rea MS, Plitnick B, Figueiro MG (2019). Nocturnal melatonin suppression by adolescents and adults for different levels, spectra, and durations of light exposure. *Journal of Biological Rhythms* 34(2): 178–194. https://doi.org/10.1177/0748730419828056
 - Wood B, Rea MS, Plitnick B, Figueiro MG (2013). Light level and duration of exposure determine the impact of self-luminous tablets on melatonin suppression. *Applied Ergonomics* 44(2): 237–240. https://doi.org/10.1016/j.apergo.2012.07.008
 - Burkhart K, Phelps JR (2009). Amber lenses to block blue light and improve sleep: a randomized trial. *Chronobiology International* 26(8): 1602–1612.
 - CIE S 026/E:2018. *System for Metrology of Optical Radiation for ipRGC-Influenced Responses to Light.*

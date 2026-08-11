@@ -27,6 +27,26 @@ enum Diagnostics {
             comparePresets()
             return true
         }
+        if args.contains("--ambient") {
+            // 取 `--flag <值>`；下一个 token 又是个开关时视为没给值。
+            func value(after flag: String) -> String? {
+                guard let i = args.firstIndex(of: flag), args.count > i + 1 else { return nil }
+                let next = args[i + 1]
+                return next.hasPrefix("--") ? nil : next
+            }
+            let guided = args.contains("--guided")
+            ambientProbe(watch: args.contains("--watch") || guided,
+                         seconds: value(after: "--watch").flatMap(Double.init),
+                         interval: value(after: "--interval").flatMap(Double.init) ?? 1,
+                         output: value(after: "--out").map { ($0 as NSString).expandingTildeInPath },
+                         guided: guided)
+            return true
+        }
+        if let i = args.firstIndex(of: "--auto-brightness") {
+            let argument = args.count > i + 1 ? args[i + 1] : nil
+            autoBrightnessProbe(argument: argument)
+            return true
+        }
         if args.contains("--print-locale") {
             printLocaleSamples()
             return true
@@ -106,6 +126,715 @@ enum Diagnostics {
     /// 整个编译掉 —— 打包好的 app 即使读不到本地化资源，自检照样打印 ✓。
     /// 而资源加载路径恰恰在 release 下才不同（走 .app 里的 Amber_Amber.bundle）。
     /// 这里不依赖 assert：资源丢了就会原样吐出 key，字符串比对立刻能看出来。
+    /// 环境光传感器的只读探针。**不写 LUT、不改背光、不改任何系统设置。**
+    ///
+    /// 用法： Amber --ambient              读一次
+    ///        Amber --ambient --watch      持续观察，同时写 CSV（Ctrl-C 结束）
+    ///        Amber --ambient --watch 60   同上，60 秒后自动结束
+    ///
+    /// 存在的理由：`level` 这个字段**没有标定过**。它到底是不是 lux、有多大误差、
+    /// 有没有迟滞、换一种光谱还成不成立，只能拿照度计实测出来。在那之前它不许
+    /// 进入任何公式。这条命令就是做那次实测用的。
+    ///
+    /// watch 模式同时回答第二个问题：**环境光变化时事件会不会被推过来。**
+    /// 静止状态下收不到事件区分不了「只在变化时推」和「根本不推」，
+    /// 所以必须真的去改变光照（遮挡传感器、开灯、手电筒）。
+    private static func ambientProbe(watch: Bool, seconds: Double?,
+                                     interval: Double, output: String?, guided: Bool) {
+        setvbuf(stdout, nil, _IONBF, 0)
+        print("=== 环境光传感器（未标定原始读数）===")
+        print("机型：\(hardwareModel())    macOS：\(ProcessInfo.processInfo.operatingSystemVersionString)")
+        print("匹配到的 ALS service：\(AmbientLightReader.matchedServiceCount())")
+
+        guard let first = AmbientLightReader.rawLevel() else {
+            print("\n读不到。这台机器没有可匹配的环境光传感器，或私有符号已变更。")
+            return
+        }
+        print(String(format: "level = %.1f    ch1 = %.1f    ch2 = %.1f",
+                     first.level, first.channel1, first.channel2))
+        print(backlightLine())
+        print("时段：\(currentPhaseName())")
+        print("""
+
+        ⚠️ level 没有单位。未经照度计标定之前，它只能当作一个单调的相对量，
+           不得当作 lux，也不得进入任何公式或界面显示。
+        """)
+
+        guard watch else { return }
+
+        // CSV 落盘，供标定与后续 shadow 分析复用。
+        // 默认落临时目录只适合短跑；长跑请用 --out 指定，临时目录会被系统清理。
+        let path = output
+            ?? NSTemporaryDirectory() + "amber-ambient-\(Int(Date().timeIntervalSince1970)).csv"
+        guard let file = FileHandle(forWritingAtPath: path) ?? {
+            FileManager.default.createFile(atPath: path, contents: nil)
+            return FileHandle(forWritingAtPath: path)
+        }() else {
+            print("✗ 无法写入 \(path)")
+            return
+        }
+        defer { try? file.close() }
+
+        func append(_ line: String) {
+            file.write(Data((line + "\n").utf8))
+        }
+        append("iso_time,elapsed_s,source,level,ch1,ch2,"
+             + "backlight_nits,slider,linear,brightness,raw_brightness,phase")
+
+        let started = Date()
+        var samples: [Reading] = []
+        // 引导模式下由状态机自己打进度，不再逐行刷屏。
+        let guide = guided ? GateAGuide() : nil
+        func record(_ source: String, _ sample: AmbientLightReader.Sample) {
+            let elapsed = Date().timeIntervalSince(started)
+            let parameters = BacklightReader.diagnosticParameters()
+            let reading = Reading(
+                elapsed: elapsed,
+                source: source,
+                level: sample.level,
+                nits: BacklightReader.currentNits(),
+                slider: AutoBrightness.sliderValue(),
+                linear: AutoBrightness.linearBrightness(),
+                // 同一张字典里的另外两个独立标度。多个标度一起看才能分清
+                // 「背光真没动」和「只是某一个读数陈旧」。
+                brightness: BacklightReader.diagnosticValue("brightness", in: parameters),
+                rawBrightness: BacklightReader.diagnosticValue("rawBrightness", in: parameters))
+            samples.append(reading)
+            guide?.consume(reading)
+
+            func text(_ value: Double?, _ format: String) -> String {
+                value.map { String(format: format, $0) } ?? ""
+            }
+            append([ISO8601DateFormatter().string(from: Date()),
+                    String(format: "%.3f", elapsed), source,
+                    String(format: "%.1f", sample.level),
+                    String(format: "%.1f", sample.channel1),
+                    String(format: "%.1f", sample.channel2),
+                    text(reading.nits, "%.1f"), text(reading.slider, "%.4f"),
+                    text(reading.linear, "%.4f"),
+                    reading.brightness.map(String.init) ?? "",
+                    reading.rawBrightness.map(String.init) ?? "",
+                    currentPhaseName()].joined(separator: ","))
+
+            guard guide == nil else { return }
+            print(String(format: "  +%7.2fs  %@  level=%8.1f  nits=%@  滑杆=%@  raw=%@",
+                         elapsed, pad(source, 18), sample.level,
+                         pad(text(reading.nits, "%.1f"), 6),
+                         pad(text(reading.slider, "%.4f"), 6),
+                         reading.rawBrightness.map(String.init) ?? "—"))
+        }
+
+        print("CSV：\(path)")
+        if guide == nil {
+            print(seconds.map { String(format: "观察 %.0f 秒。", $0) }
+                  ?? "持续观察，Ctrl-C 结束。")
+            print("""
+            现在请**实际改变光照**（遮住屏幕上边框中央的传感器、开关灯、用手电筒照），
+            观察 source 一列是否出现 als_callback —— 那说明 ALS 事件是推过来的，
+            不需要轮询。brightness_callback 只表示系统背光变化，不能代替 ALS 通知。
+            """)
+        }
+
+        var alsCallbackCount = 0
+        let observer = AmbientLightReader.Observer { sample in
+            alsCallbackCount += 1
+            record("als_callback", sample)
+        }
+        if observer == nil { print("⚠️ ALS 回调注册失败，本次只有轮询数据") }
+
+        var brightnessCallbackCount = 0
+        let brightnessObserver = DisplayBrightnessObserver {
+            brightnessCallbackCount += 1
+            guard let sample = AmbientLightReader.rawLevel() else { return }
+            record("brightness_callback", sample)
+        }
+        if brightnessObserver == nil {
+            print("⚠️ DisplayServices 亮度回调注册失败；ALS 探针仍可继续")
+        }
+
+        // 轮询只是为了在回调不工作时仍然拿到完整曲线，不代表最终实现要轮询。
+        let timer = Timer(timeInterval: max(interval, 0.1), repeats: true) { _ in
+            guard let sample = AmbientLightReader.rawLevel() else { return }
+            record("poll", sample)
+        }
+        RunLoop.current.add(timer, forMode: .default)
+
+        if let guide {
+            guide.start()
+            // 状态机自己决定何时结束；20 分钟是防挂死的兜底，不是预期时长。
+            let deadline = started.addingTimeInterval(20 * 60)
+            while !guide.isFinished, Date() < deadline {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.25))
+            }
+            timer.invalidate()
+            // 引导模式下判据由状态机下结论，汇总只提供原始区间，不再重复判定 ——
+            // 那两套判定用的驻留条件不同，同时打印会自相矛盾。
+            summarizeGateA(samples, alsCallbacks: alsCallbackCount,
+                           brightnessCallbacks: brightnessCallbackCount, verdicts: false)
+            guide.printVerdict(alsCallbacks: alsCallbackCount,
+                               brightnessCallbacks: brightnessCallbackCount)
+            print("\nCSV：\(path)")
+        } else if let seconds {
+            RunLoop.current.run(until: started.addingTimeInterval(seconds))
+            timer.invalidate()
+            summarizeGateA(samples, alsCallbacks: alsCallbackCount,
+                           brightnessCallbacks: brightnessCallbackCount, verdicts: true)
+            print("\nCSV：\(path)")
+        } else {
+            RunLoop.current.run()
+        }
+        _ = observer
+        _ = brightnessObserver
+    }
+
+    /// Gate A 的引导状态机：**自己判定，自己推进，响一声提示**。
+    ///
+    /// 为什么不用固定时长的脚本：固定 15 分钟里绝大部分时间是在空等，而真正
+    /// 要看的只有一件事 —— 光照大幅变化之后，背光**多久**有反应。有反应就立刻
+    /// 可以收工；没反应才需要等满判据要求的时间。所以每一步都是
+    /// 「等到光照真的变了」→「盯着背光」→「有反应就过，超时就判无响应」。
+    ///
+    /// 超时值刻意等于判据里的 60 秒，不为了跑得快而放宽。
+    private final class GateAGuide {
+
+        private enum Step: Int {
+            case baseline, cover, uncover, roomDark, finished
+        }
+
+        /// 触发阈值：光照要变到基线的 1/2 以下（或回到 0.8 倍以上）才算数。
+        private static let dropRatio = 2.0
+        private static let restoreRatio = 0.8
+        /// 背光相对变化到多少才算「有反应」。与汇总判据一致。
+        private static let responseThreshold = 0.05
+        /// 触发之后最多盯多久。等于判据里的驻留要求，不放宽。
+        private static let holdSeconds = 60.0
+        /// 基线要稳定多久、允许多大波动。
+        private static let baselineSeconds = 8.0
+        private static let baselineTolerance = 1.2
+
+        /// 四个背光标度。分开跟踪每一个**各自**第一次动的时刻 —— 这是整个测试
+        /// 的关键：只报「有没有反应」会掩盖「哪一个读数是死的」。
+        private static let scaleNames = ["nits", "滑杆", "linear", "brightness", "rawBrightness"]
+
+        /// 光照变化的倍数。
+        ///
+        /// 传感器完全遮住时 `level` 会读到 0，直接相除会得出「239000 倍」这种
+        /// 无意义的数。0 的真实含义是「低于传感器下限」，所以分母压到 1 并把
+        /// 结果标成下界。
+        private static func lightRatio(_ a: Double, _ b: Double) -> (value: Double, bounded: Bool) {
+            let low = min(a, b), high = max(a, b)
+            return (high / max(low, 1), low < 1)
+        }
+
+        private static func describeRatio(_ ratio: (value: Double, bounded: Bool)) -> String {
+            String(format: "%@%.1f 倍", ratio.bounded ? "≥" : "", ratio.value)
+        }
+
+        private struct Outcome {
+            let name: String
+            let levelRatio: (value: Double, bounded: Bool)
+            let observed: Double
+            /// 标度名 → 首次变化的延迟（秒）。没动过的标度不在表里。
+            let latencies: [String: Double]
+        }
+
+        private var step: Step = .baseline
+        private var baselineLevel: Double?
+        private var baselineSince: Double?
+        private var baselineMin = Double.infinity
+        private var baselineMax = 0.0
+        private var triggerAt: Double?
+        private var reference: Reading?
+        private var outcomes: [Outcome] = []
+        private var lastProgressPrint = 0.0
+        /// 本步里每个标度首次变化的延迟。
+        private var latencies: [String: Double] = [:]
+        private var announcedFirstMove = false
+
+        var isFinished: Bool { step == .finished }
+
+        func start() {
+            print("""
+
+            === Gate A 引导测试 ===
+            每一步都会自动判定，完成时响一声并自动进入下一步。不用看表。
+            期间**不要按亮度键** —— 手动调整会污染这次测量。
+
+            [1/3] 基线：什么都别动，等读数稳定…
+            """)
+        }
+
+        func consume(_ reading: Reading) {
+            switch step {
+            case .baseline:   handleBaseline(reading)
+            case .cover:      handleStimulus(reading, name: "遮挡传感器", expectDrop: true)
+            case .uncover:    handleStimulus(reading, name: "恢复光照", expectDrop: false)
+            case .roomDark:   handleStimulus(reading, name: "关灯", expectDrop: true)
+            case .finished:   break
+            }
+        }
+
+        // MARK: 基线
+
+        private func handleBaseline(_ reading: Reading) {
+            baselineMin = min(baselineMin, reading.level)
+            baselineMax = max(baselineMax, reading.level)
+
+            // 波动超过容差就重新起算，避免把正在变化的过程当成基线。
+            guard baselineMax <= baselineMin * Self.baselineTolerance else {
+                baselineSince = reading.elapsed
+                baselineMin = reading.level
+                baselineMax = reading.level
+                return
+            }
+            let since = baselineSince ?? reading.elapsed
+            baselineSince = since
+            guard reading.elapsed - since >= Self.baselineSeconds else { return }
+
+            baselineLevel = reading.level
+            reference = reading
+            beep("Tink")
+            print(String(format: "      ✓ 基线 level=%.0f   背光=%@   滑杆=%@\n",
+                         reading.level,
+                         reading.nits.map { String(format: "%.1f nits", $0) } ?? "读不到",
+                         reading.slider.map { String(format: "%.4f", $0) } ?? "读不到"))
+            advance(to: .cover)
+        }
+
+        // MARK: 刺激步骤
+
+        private func handleStimulus(_ reading: Reading, name: String, expectDrop: Bool) {
+            guard let baseline = baselineLevel else { return }
+
+            guard let triggerAt else {
+                let triggered = expectDrop
+                    ? reading.level <= baseline / Self.dropRatio
+                    : reading.level >= baseline * Self.restoreRatio
+                if triggered {
+                    self.triggerAt = reading.elapsed
+                    reference = reading
+                    beep("Tink")
+                    print(String(format: "      检测到光照变化（level %.0f → %.0f）。盯住背光…",
+                                 baseline, reading.level))
+                } else if reading.elapsed - lastProgressPrint >= 3 {
+                    lastProgressPrint = reading.elapsed
+                    let goal = expectDrop ? baseline / Self.dropRatio
+                                          : baseline * Self.restoreRatio
+                    print(String(format: "      等待中… 当前 level=%.0f，需要 %@ %.0f",
+                                 reading.level, expectDrop ? "≤" : "≥", goal))
+                }
+                return
+            }
+
+            let elapsed = reading.elapsed - triggerAt
+            let levelRatio = Self.lightRatio(baseline, reading.level)
+
+            // 逐个标度记录**各自**第一次变化的时刻。
+            //
+            // 上一版在「任何一个标度动了」就收工，结果 1.0 秒滑杆一动就跳走，
+            // 根本没给 nits 留时间 —— 那样得出的「nits 没动」是无效的。
+            // 现在必须盯到四个都动了、或者等满判据要求的时间为止。
+            for scale in movedScales(from: reference, to: reading) where latencies[scale] == nil {
+                latencies[scale] = elapsed
+            }
+            if !latencies.isEmpty, !announcedFirstMove {
+                announcedFirstMove = true
+                beep("Glass")
+                print(String(format: "      · 首个标度已响应：%@（%.1fs）。继续盯剩下的…",
+                             latencies.keys.sorted().joined(separator: "、"), elapsed))
+            }
+
+            let allMoved = Self.scaleNames.allSatisfy { latencies[$0] != nil }
+            guard allMoved || elapsed >= Self.holdSeconds else {
+                if reading.elapsed - lastProgressPrint >= 5 {
+                    lastProgressPrint = reading.elapsed
+                    let pending = Self.scaleNames.filter { latencies[$0] == nil }
+                    print(String(format: "      盯着 %@… %.0fs / %.0fs",
+                                 pending.joined(separator: "、"), elapsed, Self.holdSeconds))
+                }
+                return
+            }
+
+            beep(allMoved ? "Glass" : "Basso")
+            let pending = Self.scaleNames.filter { latencies[$0] == nil }
+            print(allMoved
+                  ? String(format: "      ✓ %@：四个标度全部响应\n", name)
+                  : String(format: "      ✗ %@：保持 %.0fs 后，%@ 始终未动\n",
+                           name, elapsed, pending.joined(separator: "、")))
+            outcomes.append(Outcome(name: name, levelRatio: levelRatio,
+                                    observed: elapsed, latencies: latencies))
+            finishStep()
+        }
+
+        /// 四个标度里有哪些真的动了。分开报是这次测量的关键 ——
+        /// 只有 nits 不动 = 读数陈旧；四个一起不动 = 自动亮度确实没动手。
+        private func movedScales(from reference: Reading?, to now: Reading) -> [String] {
+            guard let reference else { return [] }
+            var moved: [String] = []
+            func check(_ label: String, _ before: Double?, _ after: Double?) {
+                guard let before, let after, before > 0 else { return }
+                if abs(after - before) / before >= Self.responseThreshold { moved.append(label) }
+            }
+            check("nits", reference.nits, now.nits)
+            check("滑杆", reference.slider, now.slider)
+            check("brightness", reference.brightness.map(Double.init),
+                  now.brightness.map(Double.init))
+            check("rawBrightness", reference.rawBrightness.map(Double.init),
+                  now.rawBrightness.map(Double.init))
+            return moved
+        }
+
+        // MARK: 推进
+
+        private func finishStep() {
+            triggerAt = nil
+            latencies = [:]
+            announcedFirstMove = false
+            switch step {
+            case .cover:
+                advance(to: .uncover)
+            case .uncover:
+                // 只要有一次看到**任何**标度动了，系统环路就是活的，不必再折腾关灯。
+                if outcomes.contains(where: { !$0.latencies.isEmpty }) {
+                    advance(to: .finished)
+                } else {
+                    advance(to: .roomDark)
+                }
+            default:
+                advance(to: .finished)
+            }
+        }
+
+        private func advance(to next: Step) {
+            step = next
+            lastProgressPrint = 0
+            switch next {
+            case .cover:
+                print("[2/3] 现在请**用手掌盖住**屏幕上边框中央的传感器（要盖严）")
+            case .uncover:
+                print("[3/3] 松开，让光照恢复")
+            case .roomDark:
+                print("""
+                [补测] 遮挡没能让背光动。可能是遮挡被特殊处理了，换一种刺激再确认一次。
+                       现在请**关掉房间灯**（或拉上窗帘）
+                """)
+            case .finished:
+                beep("Hero")
+            case .baseline:
+                break
+            }
+        }
+
+        // MARK: 结论
+
+        func printVerdict(alsCallbacks: Int, brightnessCallbacks: Int) {
+            print("\n── Gate A 引导结论")
+            guard !outcomes.isEmpty else {
+                print("没有完成任何一个刺激步骤（可能是超时退出）。判定不成立，请重跑。")
+                return
+            }
+
+            for outcome in outcomes {
+                let detail = Self.scaleNames.map { scale in
+                    outcome.latencies[scale].map { String(format: "%@ %.1fs", scale, $0) }
+                        ?? "\(scale) 未动"
+                }.joined(separator: "  ")
+                print(String(format: "%@ 光照 %@，观察 %.0fs → %@",
+                             pad(outcome.name, 14), Self.describeRatio(outcome.levelRatio),
+                             outcome.observed, detail))
+            }
+
+            // 判据一。引导模式下我们**知道**光照确实变过，所以这里可以下定论，
+            // 不用「若期间确实改变过光照」那种含糊说法。
+            print("\n判据一 · ALS 回调可用：" + (alsCallbacks > 0
+                ? "✓ 通过（\(alsCallbacks) 个事件）→ 后续可事件驱动"
+                : "✗ 不通过。光照变了上百倍，ALS 一个事件都没推过来 —— "
+                  + "后续校正在开启期间必须固定采样。"))
+            print("           背光变化通知：\(brightnessCallbacks) 个"
+                + (brightnessCallbacks > 0
+                   ? "（能收到，但它只表示背光在动，不代表环境光变了）"
+                   : "（收不到）"))
+
+            let anyMoved = outcomes.contains { !$0.latencies.isEmpty }
+            guard anyMoved else {
+                print("""
+
+                判据二 · 系统环路有效：✗ 不通过
+                  光照变化 ≥2 倍并保持 60 秒，四个标度全部未动。
+                  这会使 Schedule.liftAboveComfortFloor 的设计前提
+                  （「macOS 已经按环境光降过一次背光」）在本机不成立。
+                """)
+                return
+            }
+
+            let fastest = outcomes.compactMap { $0.latencies.values.min() }.min() ?? 0
+            print(String(format: "\n判据二 · 系统环路有效：✓ 通过（最快 %.1fs 就有反应）", fastest))
+
+            // 每个标度在**所有**步骤里都没动过，才算这个读数是死的。
+            let dead = Self.scaleNames.filter { scale in
+                outcomes.allSatisfy { $0.latencies[scale] == nil }
+            }
+            guard !dead.isEmpty else {
+                print("           四个标度都会跟随，读数可信。")
+                return
+            }
+            print("""
+
+            ⚠️ 但这几个标度在所有步骤里**一次都没动过**：\(dead.joined(separator: "、"))
+               每一步都盯满了判据要求的时间，所以这不是「没来得及」。
+            """)
+            if dead.contains("nits") {
+                print("""
+                   nits 来自 BacklightReader.currentNits()，而它是深夜舒适下限
+                   （Schedule.liftAboveComfortFloor）的唯一输入。这条已发布的逻辑
+                   现在是拿一个不变的数在做判断，必须单独处理。
+                """)
+            }
+        }
+
+        /// 系统音效。诊断命令跑在有 run loop 的进程里，NSSound 可以直接播。
+        private func beep(_ name: String) {
+            NSSound(contentsOfFile: "/System/Library/Sounds/\(name).aiff",
+                    byReference: true)?.play()
+        }
+    }
+
+    /// watch 采到的一行。
+    private struct Reading {
+        let elapsed: Double
+        let source: String
+        let level: Double
+        let nits: Double?
+        let slider: Double?
+        let linear: Double?
+        let brightness: Int?
+        let rawBrightness: Int?
+    }
+
+    /// Gate A 的两条判据，直接由数据判定，不靠肉眼扫 CSV。
+    ///
+    /// 判据一 · ALS 回调可用：出现过 `als_callback`。
+    /// 判据二 · 系统环路有效：`level` 极值比 ≥2 倍、高低两端各驻留 ≥60 s 的前提下，
+    ///          背光相对变化 ≥5%。
+    ///
+    /// 第二条只有在**确实制造出了足够大且足够久的光照变化**时才有意义，
+    /// 所以驻留时间不满足时不判定通过或失败，而是判「本次未构成有效测试」——
+    /// 把"没测出来"和"测出来是坏的"分开，这是这份汇总最重要的一件事。
+    private static func summarizeGateA(_ samples: [Reading], alsCallbacks: Int,
+                                       brightnessCallbacks: Int, verdicts: Bool) {
+        print("\n── Gate A 汇总")
+        guard samples.count >= 2, let firstSample = samples.first,
+              let lastSample = samples.last else {
+            print("样本不足，无法判定。")
+            return
+        }
+
+        let levels = samples.map(\.level)
+        guard let minLevel = levels.min(), let maxLevel = levels.max() else {
+            print("没有环境光读数，无法判定。")
+            return
+        }
+        // level = 0 表示低于传感器下限，是合法读数，不是异常。分母压到 1。
+        let levelRatio = maxLevel / max(minLevel, 1)
+
+        /// 某个条件累计占了多少秒。每个样本按它与下一个样本的时间差计权。
+        func dwell(_ predicate: (Reading) -> Bool) -> Double {
+            var total = 0.0
+            for (index, sample) in samples.enumerated() where predicate(sample) {
+                let next = index + 1 < samples.count
+                    ? samples[index + 1].elapsed : lastSample.elapsed
+                total += max(next - sample.elapsed, 0)
+            }
+            return total
+        }
+
+        let lowDwell = dwell { $0.level <= minLevel * 1.2 }
+        let highDwell = dwell { $0.level >= maxLevel / 1.2 }
+
+        print(String(format: "观察 %.0f 秒，%d 行（poll %d / als_callback %d / brightness_callback %d）",
+                     lastSample.elapsed - firstSample.elapsed, samples.count,
+                     samples.filter { $0.source == "poll" }.count,
+                     alsCallbacks, brightnessCallbacks))
+        print(String(format: "level          %8.1f … %8.1f   变化 %.1f 倍（低端驻留 %.0fs，高端 %.0fs）",
+                     minLevel, maxLevel, levelRatio, lowDwell, highDwell))
+
+        // 四个背光标度分开报。它们一起不动 = 背光真没动；只有 nits 不动 = 读数的问题。
+        let nitsSpan = span(samples.compactMap(\.nits))
+        let sliderSpan = span(samples.compactMap(\.slider))
+        let brightnessSpan = span(samples.compactMap { $0.brightness.map(Double.init) })
+        let rawSpan = span(samples.compactMap { $0.rawBrightness.map(Double.init) })
+        print(String(format: "背光 nits      %8.1f … %8.1f   相对变化 %.2f%%",
+                     nitsSpan.low, nitsSpan.high, nitsSpan.relative * 100))
+        print(String(format: "滑杆 0–1       %8.4f … %8.4f", sliderSpan.low, sliderSpan.high))
+        let linearSpan = span(samples.compactMap(\.linear))
+        print(String(format: "linear 0–1     %8.4f … %8.4f", linearSpan.low, linearSpan.high))
+        print(String(format: "brightness     %8.0f … %8.0f", brightnessSpan.low, brightnessSpan.high))
+        print(String(format: "rawBrightness  %8.0f … %8.0f", rawSpan.low, rawSpan.high))
+
+        guard verdicts else { return }
+
+        print("\n判据一 · ALS 回调可用：" + (alsCallbacks > 0
+            ? "✓ 通过（\(alsCallbacks) 个事件）→ 后续可事件驱动"
+            : "✗ 不通过（0 个事件）→ 后续校正在开启期间必须固定采样，"
+              + "不得拿背光变化通知兜底"))
+
+        let sufficientStimulus = levelRatio >= 2 && lowDwell >= 60 && highDwell >= 60
+        guard sufficientStimulus else {
+            print(String(format: """
+            判据二 · 系统环路有效：— 本次未构成有效测试
+                      需要 level 极值比 ≥2 倍且高低两端各驻留 ≥60 s，实际 %.1f 倍 / %.0fs / %.0fs。
+                      请把光照变化做得更大更久（遮住传感器 60 s、关灯 5 分钟）后重跑。
+            """, levelRatio, lowDwell, highDwell))
+            return
+        }
+
+        let backlightMoved = nitsSpan.relative >= 0.05
+        print("判据二 · 系统环路有效：" + (backlightMoved
+            ? String(format: "✓ 通过（背光变化 %.1f%%）", nitsSpan.relative * 100)
+            : String(format: "✗ 不通过（level 变了 %.1f 倍，背光只变了 %.2f%%，未达 5%%）",
+                     levelRatio, nitsSpan.relative * 100)))
+
+        guard !backlightMoved else { return }
+        let othersMoved = sliderSpan.relative > 0 || brightnessSpan.relative > 0
+            || rawSpan.relative > 0
+        print(othersMoved
+            ? "          → 但滑杆 / brightness / rawBrightness 里有在动，"
+              + "说明是 BrightnessMilliNits 这一个读数陈旧或量化，不是背光没动。"
+            : "          → 四个标度全部未动，说明不是读数问题，是自动亮度确实没有动手。"
+              + "\n            这会使 Schedule.liftAboveComfortFloor 的设计前提"
+              + "（「macOS 已经按环境光降过一次背光」）在本机不成立，需要先处理。")
+    }
+
+    private static func span(_ values: [Double]) -> (low: Double, high: Double, relative: Double) {
+        guard let low = values.min(), let high = values.max() else { return (0, 0, 0) }
+        return (low, high, low > 0 ? (high - low) / low : 0)
+    }
+
+    /// `DisplayServices` 的背光变化通知，仅供 `--ambient --watch` 验证覆盖面。
+    /// 它不写背光，也不能代表环境光发生了变化。
+    private final class DisplayBrightnessObserver {
+        private typealias Callback = @convention(c) (
+            UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeRawPointer?,
+            UnsafeRawPointer?, UnsafeRawPointer?
+        ) -> Void
+        private typealias Register = @convention(c) (
+            CGDirectDisplayID, CGDirectDisplayID, Callback
+        ) -> Int32
+        private typealias Unregister = @convention(c) (
+            CGDirectDisplayID, CGDirectDisplayID
+        ) -> Int32
+
+        nonisolated(unsafe) private static weak var active: DisplayBrightnessObserver?
+        private static let handle = dlopen(
+            "/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices",
+            RTLD_LAZY
+        )
+
+        private static func lookup<T>(_ name: String, as type: T.Type) -> T? {
+            guard let handle, let address = dlsym(handle, name) else { return nil }
+            return unsafeBitCast(address, to: T.self)
+        }
+
+        private let display: CGDirectDisplayID
+        private let unregister: Unregister
+        private let onChange: () -> Void
+
+        init?(onChange: @escaping () -> Void) {
+            guard Self.active == nil,
+                  let register = Self.lookup(
+                    "DisplayServicesRegisterForBrightnessChangeNotifications",
+                    as: Register.self),
+                  let unregister = Self.lookup(
+                    "DisplayServicesUnregisterForBrightnessChangeNotifications",
+                    as: Unregister.self),
+                  let display = GammaController.activeDisplays().first(where: {
+                    CGDisplayIsBuiltin($0) != 0
+                  })
+            else { return nil }
+
+            self.display = display
+            self.unregister = unregister
+            self.onChange = onChange
+            Self.active = self
+            guard register(display, display, Self.dispatch) == 0 else {
+                Self.active = nil
+                return nil
+            }
+        }
+
+        deinit {
+            _ = unregister(display, display)
+            if Self.active === self { Self.active = nil }
+        }
+
+        private static let dispatch: Callback = { _, _, _, _, _ in
+            guard let observer = DisplayBrightnessObserver.active else { return }
+            DispatchQueue.main.async { [weak observer] in observer?.onChange() }
+        }
+    }
+
+    private static func hardwareModel() -> String {
+        var size = 0
+        sysctlbyname("hw.model", nil, &size, nil, 0)
+        guard size > 0 else { return "未知" }
+        var buffer = [CChar](repeating: 0, count: size)
+        sysctlbyname("hw.model", &buffer, &size, nil, 0)
+        return String(cString: buffer)
+    }
+
+    private static func backlightLine() -> String {
+        BacklightReader.currentNits().map { String(format: "背光：%.1f nits", $0) }
+            ?? "背光：读不到（外接屏 / Intel）"
+    }
+
+    /// 时段标签。用 `solar: nil` —— 诊断只要一个标签，不值得为它去碰定位或系统外观。
+    /// 设置只读一次：watch 模式每秒记一行，没必要每行都去读 UserDefaults。
+    private static let probeSettings = Settings.load()
+
+    private static func currentPhaseName() -> String {
+        let target = Schedule.evaluate(at: Date(), settings: probeSettings, solar: nil).target
+        return target.phase.title(in: probeSettings.language)
+    }
+
+    /// 读 / 写系统「自动调节亮度」，走的正是界面开关的那条路径。
+    ///
+    /// 用法： Amber --auto-brightness          只读，不改任何设置
+    ///        Amber --auto-brightness on|off   写入并回读
+    ///
+    /// 这条命令存在的理由和 `--apply` 一样：私有符号的签名对不对，只能在真机上
+    /// 端到端跑一遍才知道，不能靠编译通过来判断。
+    private static func autoBrightnessProbe(argument: String?) {
+        print("=== 系统自动亮度 ===")
+        print("支持环境光补偿：\(AutoBrightness.isSupported ? "是" : "否")")
+        print("当前状态：\(describe(AutoBrightness.isEnabled()))")
+
+        guard let argument else {
+            print("\n（只读；传 on / off 可写入）")
+            return
+        }
+        guard let desired = ["on": true, "true": true, "1": true,
+                             "off": false, "false": false, "0": false][argument.lowercased()]
+        else {
+            print("\n✗ 无法识别的参数「\(argument)」，可用 on / off")
+            return
+        }
+
+        print("\n写入：\(desired ? "开启" : "关闭")")
+        let actual = AutoBrightness.setEnabled(desired)
+        print("回读：\(describe(actual))")
+        print(actual == desired
+              ? "✓ 写入生效（以回读为准，不看返回码）"
+              : "✗ 回读与请求不符 —— 私有符号可能已变，界面开关会自己弹回去")
+    }
+
+    private static func describe(_ state: Bool?) -> String {
+        switch state {
+        case true?:  "已开启"
+        case false?: "已关闭"
+        case nil:    "读不到（无内置屏 / 私有符号缺失）"
+        }
+    }
+
     private static func printLocaleSamples() {
         setvbuf(stdout, nil, _IONBF, 0)
         // 挑一个不含格式化占位符、四种语言译文互不相同的 key。
@@ -191,9 +920,14 @@ enum Diagnostics {
         }
         print("  注：Amber 只能控制相对衰减，落点由系统背光决定，无法运行时保证绝对 nits。")
 
-        print("\n── 实测背光与安全下限反解")
-        if let nits = BacklightReader.currentNits() {
-            print(String(format: "本机内置屏背光：%.1f nits", nits))
+        print("\n── 背光读数与安全下限反解")
+        if let nits = BacklightReader.rawNitsForDiagnostics() {
+            // 刻意用未经闸门的原始值，并明确标注它有没有被证明是活的 ——
+            // 诊断要能看见真实情况，但不能让人误以为那是实测量。
+            print(String(format: "IORegistry 报出的背光：%.1f nits（%@）", nits,
+                         BacklightReader.isProvenLive
+                            ? "本进程内已观察到它变化，视为有效"
+                            : "本进程内尚未观察到它变化，决策路径按「读不到」处理"))
             for scenario in [nits, 160.0, 80.0, 30.0] {
                 let raw = LightTarget(cct: Settings().nightCCT,
                                       brightness: Settings().nightBrightness,
@@ -207,6 +941,14 @@ enum Diagnostics {
             }
         } else {
             print("读不到（外接屏 / Intel / 键名变更）→ 退回纯相对衰减")
+        }
+
+        print("\n── 系统自动亮度（macOS 环境光补偿）")
+        print("本机是否支持：\(AutoBrightness.isSupported ? "是" : "否")")
+        switch AutoBrightness.isEnabled() {
+        case true?:  print("当前状态：已开启 —— 背光跟随环境，上面的反解才有意义")
+        case false?: print("当前状态：已关闭 —— 背光固定，Amber 的相对压暗没有环境跟随可依")
+        case nil:    print("当前状态：读不到（无内置屏 / 私有符号缺失）→ 界面上的开关会禁用")
         }
 
         assertSciencePreset(evening: evening, night: night)
@@ -292,6 +1034,13 @@ enum Diagnostics {
         host.frame = NSRect(origin: .zero, size: size)
         host.layoutSubtreeIfNeeded()
         for _ in 0..<20 { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+
+        // 必须自己铺一层不透明底色。`cacheDisplay` 只画视图，不画窗口背景，
+        // 而 SwiftUI 的文字颜色跟随系统外观 —— 深色模式下就是白字画在透明底上，
+        // 存成 PNG 后看上去整页空白，"渲染成功但一片空白"的检测也会被骗过去。
+        host.wantsLayer = true
+        host.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        host.layoutSubtreeIfNeeded()
 
         guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
             print("✗ 无法创建位图"); return
@@ -408,6 +1157,8 @@ enum Diagnostics {
         migrationCheck()
         sciencePresetCheck()
         comfortFloorCheck()
+        backlightGateCheck()
+        autoBrightnessCheck()
         colorScience()
         melanopicCurve()
         solarCheck()
@@ -558,6 +1309,53 @@ enum Diagnostics {
                "白天档不应被安全下限改动")
 
         print("✓ 暗环境安全下限：只抬不降、上限 1.0、不改色温、背光未知时不生效\n")
+    }
+
+    /// 背光读数的实时性闸门自检。
+    ///
+    /// 唯一的不变量是**单向**的：`currentNits()` 给出值 ⇒ 该读数已被证明会变化。
+    /// 不能反过来断言「一定返回 nil」—— 在读数正常的机器上它本来就该给出值。
+    /// 这条写法与机器无关，任何一台上都成立。
+    private static func backlightGateCheck() {
+        let before = BacklightReader.isProvenLive
+        let gated = BacklightReader.currentNits()
+        assert(gated == nil || BacklightReader.isProvenLive,
+               "闸门被绕过：未证明实时却给出了 nits")
+
+        // 同一个值重复读不得把它「证明」成活的。
+        _ = BacklightReader.currentNits()
+        if !before, BacklightReader.rawNitsForDiagnostics() != nil {
+            assert(BacklightReader.isProvenLive == false || gated != nil,
+                   "读数没变却被判成实时")
+        }
+
+        let raw = BacklightReader.rawNitsForDiagnostics()
+        print("✓ 背光实时性闸门：原始读数 "
+            + (raw.map { String(format: "%.1f nits", $0) } ?? "无")
+            + "，决策路径 "
+            + (BacklightReader.isProvenLive ? "已确认实时，采用" : "未确认实时，按读不到处理")
+            + "\n")
+    }
+
+    /// 系统自动亮度开关的可用性自检。
+    ///
+    /// **只读。** 自检绝不去翻用户的系统设置——那是副作用，而且一旦进程中途挂掉，
+    /// 用户的「自动调节亮度」就被我们留在了关闭状态。这里只验证一件事：
+    /// 「支持」与「读得到状态」必须同真同假，界面才能靠 nil 判断禁用而不出现
+    /// 「开关能点但点了没反应」。
+    private static func autoBrightnessCheck() {
+        let supported = AutoBrightness.isSupported
+        let state = AutoBrightness.isEnabled()
+        assert(supported == (state != nil),
+               "isSupported 与 isEnabled() 不一致：支持=\(supported) 状态=\(String(describing: state))")
+
+        // 私有符号一旦消失，两者会一起变成 false / nil，UI 禁用开关即可，不是失败。
+        let description = switch state {
+        case true?:  "已开启"
+        case false?: "已关闭"
+        case nil:    "不支持（外接屏 / Intel / 私有符号缺失）"
+        }
+        print("✓ 系统自动亮度：\(description)，可用性与可读性一致\n")
     }
 
     private static func colorScience() {

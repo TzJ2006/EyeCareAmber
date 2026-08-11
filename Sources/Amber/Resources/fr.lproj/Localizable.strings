@@ -44,7 +44,7 @@
 "advanced.title" = "Réglages avancés";
 "advanced.language" = "Langue";
 "advanced.autoBrightness" = "Luminosité automatique";
-"advanced.autoBrightness.explanation" = "Gardez la luminosité automatique de macOS activée : le capteur de lumière lui appartient. Sur l'écran intégré, Amber lit le rétroéclairage obtenu en nits et cesse d'assombrir dès que l'écran est assez sombre. Les écrans externes ne sont pas lisibles.";
+"advanced.autoBrightness.explanation" = "Gardez la luminosité automatique de macOS activée : le capteur de lumière lui appartient. Sur les écrans intégrés, Amber tente de lire le rétroéclairage obtenu en nits et, lorsque cette lecture s'avère vivante, cesse d'assombrir dès que l'écran est assez sombre. Sur les écrans illisibles ou dont la valeur est figée, la courbe temporelle s'applique sans ajustement.";
 "advanced.solarSource" = "Source du lever et du coucher du soleil";
 "advanced.launchAtLogin" = "Ouvrir à la connexion";
 "advanced.forceOverlay" = "Forcer le mode superposition";
@@ -85,3 +85,6 @@
 "advanced.backlight" = "Rétroéclairage mesuré";
 "advanced.backlight.value" = "Écran intégré : %.0f nits. En dessous de %.0f nits, Amber cesse d'assombrir, afin de ne jamais rendre l'écran moins lisible que sans lui.";
 "advanced.backlight.unavailable" = "Illisible sur cet écran (moniteur externe ou Mac Intel). Amber n'applique qu'une atténuation relative.";
+"advanced.backlight.unverified" = "Cet écran renvoie une valeur de rétroéclairage, mais elle n'a pas bougé depuis le lancement : Amber ne peut pas confirmer qu'il s'agit d'une lecture en direct — sur certains Mac, cette clé est un instantané du démarrage. Tant qu'elle ne bouge pas, Amber la considère illisible et n'applique qu'une atténuation relative.";
+"advanced.autoBrightness.system" = "Réglage macOS : confie le rétroéclairage au capteur de lumière ambiante";
+"advanced.autoBrightness.unsupported" = "Cet écran n'a pas de capteur de lumière ambiante (moniteur externe ou Mac Intel), le commutateur est donc indisponible. Amber n'applique qu'une atténuation relative.";

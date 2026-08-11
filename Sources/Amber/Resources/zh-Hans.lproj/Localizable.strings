@@ -44,7 +44,7 @@
 "advanced.title" = "高级设置";
 "advanced.language" = "语言";
 "advanced.autoBrightness" = "自动亮度";
-"advanced.autoBrightness.explanation" = "请保持 macOS 自动亮度开启，环境光传感器归系统管。内置屏上 Amber 会读取由此得到的背光 nits，屏幕已经够暗时就停止继续压暗。外接屏读不到，只按时间曲线运行。";
+"advanced.autoBrightness.explanation" = "请保持 macOS 自动亮度开启，环境光传感器归系统管。内置屏上 Amber 会尝试读取由此得到的背光 nits；只有在确认该读数确实会跟随变化时，才会在屏幕已经够暗时停止继续压暗。读不到、或读数是冻结值的屏幕，只按时间曲线运行。";
 "advanced.solarSource" = "日出日落来源";
 "advanced.launchAtLogin" = "开机自动启动";
 "advanced.forceOverlay" = "强制使用覆盖层";
@@ -85,3 +85,6 @@
 "advanced.backlight" = "实测背光";
 "advanced.backlight.value" = "内置屏 %.0f nits。低于 %.0f nits 时 Amber 会停止继续压暗，保证不会比不开它更难看清。";
 "advanced.backlight.unavailable" = "这块屏读不到（外接屏或 Intel Mac）。Amber 只施加相对衰减。";
+"advanced.backlight.unverified" = "这块屏报得出背光数值，但它自启动以来一次没变过，Amber 无法确认那是实时读数 —— 在部分 Mac 上这个键是开机快照。在看到它跟随变化之前，一律当作读不到，只施加相对衰减。";
+"advanced.autoBrightness.system" = "macOS 的设置，把背光交给环境光传感器";
+"advanced.autoBrightness.unsupported" = "这块屏没有环境光传感器（外接屏或 Intel Mac），开关不可用。Amber 只施加相对衰减。";

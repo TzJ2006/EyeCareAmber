@@ -30,6 +30,8 @@ final class Engine: ObservableObject {
     @Published private(set) var displayCount = 0
     /// 内置屏当前背光（nits）。外接屏 / Intel / 读取失败时为 nil。
     @Published private(set) var backlightNits: Double?
+    /// 系统「自动调节亮度」是否开启。这块屏不支持环境光补偿时为 nil。
+    @Published private(set) var autoBrightnessEnabled: Bool?
     @Published var settings: Settings {
         didSet {
             guard settings != oldValue else { return }
@@ -96,6 +98,9 @@ final class Engine: ObservableObject {
         // 内置屏能读到绝对背光，用它兜住「暗环境被压得过暗」的下限。
         // 外接屏 / Intel 读不到，返回 nil，退回纯相对衰减。
         backlightNits = BacklightReader.currentNits()
+        // 顺带把系统自动亮度的开关状态刷新一次：用户可能刚在「系统设置」里改过。
+        // 只读一个布尔，比这次唤醒本身还便宜。
+        autoBrightnessEnabled = AutoBrightness.isEnabled()
         let result = Schedule.evaluate(at: now, settings: settings, solar: events,
                                        backlightNits: backlightNits)
 
@@ -241,6 +246,18 @@ final class Engine: ObservableObject {
     var isPaused: Bool {
         if let until = settings.pausedUntil { return until > Date() }
         return false
+    }
+
+    /// 把绝对亮度交回给 macOS 的环境光环路（或收回来）。
+    ///
+    /// 写完立刻回读，UI 显示的永远是系统里的事实而不是我们请求的值——写失败时
+    /// 开关会自己弹回去，这比假装成功要好。写不进去也不改本地设置：Amber 没有
+    /// 「我以为的自动亮度状态」这种影子状态。
+    func setSystemAutoBrightness(_ on: Bool) {
+        guard let actual = AutoBrightness.setEnabled(on) else { return }
+        autoBrightnessEnabled = actual
+        // 背光会随之变化，让下一帧的读数和舒适下限判断跟上。
+        refresh(force: true)
     }
 
     func requestLocation() {

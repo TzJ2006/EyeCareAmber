@@ -16,7 +16,7 @@ A menu-bar lighting tool for macOS 15+. Native on Apple Silicon. Steady-state CP
 Grab the universal build from [Releases](https://github.com/TzJ2006/EyeCareAmber/releases).
 
 ```bash
-unzip Amber-1.1.0-universal.zip
+unzip Amber-1.1.1-universal.zip
 mv Amber.app /Applications/
 xattr -dr com.apple.quarantine /Applications/Amber.app
 open /Applications/Amber.app
@@ -57,9 +57,17 @@ The overlay is used only for explicit “extra dimming” or when LUT is unavail
 
 ### Division of labor with system auto-brightness
 
-Keep macOS auto-brightness on. The system owns the ambient light sensor and hardware backlight. Amber does not read the ALS and never sets system brightness; it only applies relative LUT attenuation on top of the current backlight.
+Keep macOS auto-brightness on. The system owns the ambient light sensor and hardware backlight. Amber's normal run path does not read the ALS, and Amber never sets system brightness; it only applies relative LUT attenuation on top of the current backlight.
 
-On the built-in display Amber does read the resulting backlight, in nits, from `AppleARMBacklight` in the IORegistry. That closes the loop that relative attenuation alone cannot: the same ×0.75 factor is 119 nits at a 400-nit backlight and 8.9 nits at 30 nits, and the second one is below every published comfort floor. Once the screen is already dark enough, Amber stops dimming further — it never makes the display harder to read than leaving it off. External displays and Intel Macs have no such node, so there the time curve runs on relative attenuation only.
+`--ambient` is a diagnostic command that does read the sensor, but its output is a **raw, uncalibrated number with no unit** — it has not been checked against a lux meter, so it is not lux and must not be treated as such. Nothing in the running app consumes it, and it is never shown in the UI.
+
+On the built-in display Amber tries to read the resulting backlight, in nits, from `AppleARMBacklight` in the IORegistry. Where that reading is live it closes a loop that relative attenuation alone cannot: the same ×0.75 factor is 119 nits at a 400-nit backlight and 8.9 nits at 30 nits, and the second one is below every published comfort floor. Once the screen is already dark enough, Amber stops dimming further — it never makes the display harder to read than leaving it off.
+
+**That reading is not live on every Mac.** On a Mac16,7 running macOS 26.5.2 it never updates: with the sensor covered, macOS moved its own brightness slider within one second and the screen visibly changed, while `BrightnessMilliNits` stayed byte-identical for seven hours, alongside frozen `brightness`, `rawBrightness` and `BrightnessMicroAmps`, and a `CurrentNits` pinned at 0. The `backlight report / brightness report` IOReport channels return the same dead values, and no other node in the IORegistry publishes nits. That machine reports `new-backlight-architecture = Yes`, so the older keys appear to be vestigial.
+
+A frozen value that looks plausible is worse than no value, so Amber gates it: the reading is used only after it has been observed to change, and until then Amber treats the display as unreadable and runs the time curve on relative attenuation alone — the same as on external displays and Intel Macs.
+
+Because that division of labor only holds while the system side of it is switched on, Advanced Settings carries a switch for it. It reads and writes the macOS “Automatically adjust brightness” setting directly — the same one in System Settings → Displays — through `DisplayServices`. The state shown is always read back from the system rather than cached as an Amber preference, and the switch is disabled on displays with no ambient light sensor. Amber still never reads illuminance and never sets the backlight itself; writing the backlight would fight the very control loop this hands it back to.
 
 ### Power design
 
@@ -114,11 +122,13 @@ Colour temperature is then picked where the two cost curves cross. Holding that 
 
 Melanopsin on ipRGCs peaks near 480 nm; after pre-retinal filtering the effective peak is about **490 nm** — the main channel for melatonin suppression and circadian phase shift. The built-in curve uses a Govardovskii A1 visual-pigment template (λmax = 490 nm); self-test confirms the peak at 490 nm.
 
-Night intervention studies commonly use amber filters that **cut below ~550 nm**. RCTs by Burkhart & Phelps (2009) and Shechter et al. (2018) found better subjective and objective (actigraphy) sleep after wearing amber lenses for 2 hours before bed. Amber’s deep-night default is 2700 K, the warmest colour temperature with direct melatonin data behind it (Nagare, Rea, Plitnick & Figueiro 2019 measured 18.4% suppression at 2700 K against 24.7% at 6500 K); the verified literature has nothing at all between about 3000 K and 4400 K. The sliders still reach 1950 K for anyone who wants maximum amber, and stop there because below about 1930 K the blue gain clamps to exactly zero and nothing further changes.
+Night intervention studies commonly use amber filters that **cut below ~550 nm**. RCTs by Burkhart & Phelps (2009) and Shechter et al. (2018) found better subjective and objective (actigraphy) sleep after wearing amber lenses for 2 hours before bed. Amber’s deep-night default is 2700 K, the warmest colour temperature with direct melatonin data behind it (Nagare, Rea, Plitnick & Figueiro 2019 report 18.4% suppression at 2700 K against 24.7% at 6500 K, SEM 1.0% each); the verified literature has nothing at all between about 3000 K and 4400 K. Read those two figures for what they are: marginal means for the spectrum factor pooled across 40–1000 lux at the eye and 0.5–3 hours of exposure, in 18 adolescents and 23 adults. A screen cannot deliver that illuminance, so they support the *direction* — 2700 K suppresses less than 6500 K, all else equal — and not any dose estimate for a display.
+
+Against that sits Xie, Yu & Chen (2025), which found the opposite for the other endpoint: across 36 participants at both 3 lux and 450 lux, 2800 K produced the **highest** visual fatigue, while 4500 K was best in the dark and 4500/6500 K were best in the office. Its abstract says nothing about whether the three colour temperatures were luminance-matched, and that has not been possible to verify, so the finding cannot be separated from a possible brightness confound. Amber keeps 2700 K by default because one unreplicated study with an unresolved confound is not enough to move everyone’s default — but the conflict is real, and it is a conflict between two different endpoints rather than a disagreement about one. The sliders still reach 1950 K for anyone who wants maximum amber, and stop there because below about 1930 K the blue gain clamps to exactly zero and nothing further changes.
 
 ### Why evening dimming exists
 
-ISO 9241-303 suggests 100–150 cd/m² for screens at 500 lx horizontal illuminance. Under low light the comfortable band is far lower, though the literature is not tight about where: published optima for dark rooms span roughly 20–65 cd/m², a fivefold spread across studies. Amber treats 20 cd/m² as a floor rather than a target. Keeping noon-level screen brightness after dark is a major source of evening discomfort — hence the dusk transition.
+ISO 9241-303 suggests 100–150 cd/m² for screens at 500 lx horizontal illuminance. Under low light the comfortable band is far lower, though the literature is not tight about where: published optima for dark rooms span roughly 20–65 cd/m², a fivefold spread across studies. Amber treats 20 cd/m² as a floor rather than a target. That spread is only about near-dark rooms; once the room is lit the same literature disagrees by a factor of three — Kim et al. (2017) put the lower comfort limit at 113 cd/m² for 50 lx, where Zhou et al. (2021) measured optima of 34.5 and 41.4 cd/m² at the same illuminance. There is no ambient-independent floor. Keeping noon-level screen brightness after dark is a major source of evening discomfort — hence the dusk transition.
 
 ---
 
@@ -191,6 +201,8 @@ swift run Amber --compare-presets      # Compare v1/v2 presets; relative metrics
 swift run Amber --apply 2700 0.62      # End-to-end LUT write accuracy + restore
 swift run Amber --restore-test         # Confirm restore does not damage display calibration
 swift run Amber --render-ui out.png    # Offscreen-render the menu UI to PNG
+swift run Amber --auto-brightness      # Read system auto-brightness; add on/off to write it
+swift run Amber --ambient --watch      # Log raw ambient-sensor readings to CSV; read-only
 python3 Scripts/check-localization.py  # Four-locale key parity + locale codes vs build product
 python3 Scripts/check-readme-parity.py  # Keep README.md and README.zh-Hans.md in sync
 ```
@@ -208,7 +220,8 @@ The “locale code vs build product” check in `check-localization.py` exists f
 ## Known limitations
 
 - **Do not run system Night Shift at the same time.** It works below the gamma layer, so it does not overwrite the LUT — the two warmings multiply instead, and the result is warmer than either intends. Tools that *do* fight over the same table are f.lux, Lunar, BetterDisplay and MonitorControl; every 15 minutes Amber checks whether one of them overwrote it and, if so, adopts that table as the new baseline — damage control, not a good setup.
-- Absolute nits are readable on Apple Silicon built-in displays only, and through an undocumented IORegistry key that Apple may rename. On external displays, on Intel Macs, or if that key moves, Amber falls back to relative attenuation and the comfort floor cannot be enforced.
+- Absolute nits are readable on Apple Silicon built-in displays only, through an undocumented IORegistry key that Apple may rename, and **on some Macs that key is a boot-time snapshot that never updates**. Amber only uses the reading after it has been seen to change. On external displays, on Intel Macs, where the key moves, or where it is frozen, Amber falls back to relative attenuation and the comfort floor cannot be enforced.
+- The “Automatically adjust brightness” switch also goes through undocumented interfaces (three `DisplayServices` symbols, looked up weakly with `dlsym`). If the symbols disappear the switch disables itself and nothing else is affected; the private API does mean Amber is not a candidate for the Mac App Store.
 - Dimming through the LUT scales white but not black, so on an LCD the on-screen contrast ratio falls with the output factor. On the mini-LED XDR panels the loss is irrelevant; on a MacBook Air it is not.
 - Writing gamma tables makes macOS turn off HDR/EDR while Amber is active.
 - There are reports (FB18559786, FB19136488) of `CGSetDisplayTransferByTable` being silently ignored on Apple Silicon built-in displays while “Automatically adjust brightness” is on. It reproduces on some macOS builds and not others; `--apply` verifies by reading the table back, so run it if colours never change.
@@ -237,6 +250,8 @@ Sources/Amber/
     Settings.swift        Persistence with tolerant decoding
     GammaController.swift LUT I/O, baselines, lossless restore, overwrite detection
     OverlayController.swift Overlay (extra dim / fallback only)
+    BacklightReader.swift Current built-in backlight in nits (IORegistry)
+    AutoBrightness.swift  System “Automatically adjust brightness” (DisplayServices, weak lookup)
     Engine.swift          Orchestration + low-power timing + system events
   UI/
     MenuContentView.swift Menu UI
@@ -255,6 +270,10 @@ Scripts/
 - Brown TM, Brainard GC, Cajochen C, et al. (2022). Recommendations for daytime, evening, and nighttime indoor light exposure to best support physiology, sleep, and wakefulness in healthy adults. *PLOS Biology* 20(3): e3001571. https://doi.org/10.1371/journal.pbio.3001571
 - Singh S, Keller PR, Busija L, McMillan P, Makrai E, Lawrenson JG, Hull CC, Downie LE (2023). Blue-light filtering spectacle lenses for visual performance, sleep, and macular health in adults. *Cochrane Database of Systematic Reviews* 8: CD013244. https://doi.org/10.1002/14651858.CD013244.pub2
 - Nagare R, Plitnick B, Figueiro MG (2019). Does the iPad Night Shift mode reduce melatonin suppression? *Lighting Research & Technology* 51(3): 373–383. https://doi.org/10.1177/1477153517748189
+- Zhou Y, Shi H, Chen Q-W, Ru T, Zhou G (2021). Investigation of the optimum display luminance of an LCD screen under different ambient illuminances in the evening. *Applied Sciences* 11(9): 4108. https://doi.org/10.3390/app11094108
+- Kim SR, Lee SH, Jeon DH, Kim JS, Lee SW (2017). Optimum display luminance dependence on ambient illuminance. *Optical Engineering* 56(1): 017110. https://doi.org/10.1117/1.OE.56.1.017110
+- Xie X, Yu S, Chen D (2025). Effects of screen color mode and color temperature on visual fatigue under different ambient illuminations. *International Journal of Human–Computer Interaction* 41(2): 821–833. https://doi.org/10.1080/10447318.2024.2305982
+- Nagare R, Rea MS, Plitnick B, Figueiro MG (2019). Nocturnal melatonin suppression by adolescents and adults for different levels, spectra, and durations of light exposure. *Journal of Biological Rhythms* 34(2): 178–194. https://doi.org/10.1177/0748730419828056
 - Wood B, Rea MS, Plitnick B, Figueiro MG (2013). Light level and duration of exposure determine the impact of self-luminous tablets on melatonin suppression. *Applied Ergonomics* 44(2): 237–240. https://doi.org/10.1016/j.apergo.2012.07.008
 - Burkhart K, Phelps JR (2009). Amber lenses to block blue light and improve sleep: a randomized trial. *Chronobiology International* 26(8): 1602–1612.
 - CIE S 026/E:2018. *System for Metrology of Optical Radiation for ipRGC-Influenced Responses to Light.*

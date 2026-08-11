@@ -44,7 +44,7 @@
 "advanced.title" = "Advanced Settings";
 "advanced.language" = "Language";
 "advanced.autoBrightness" = "Automatic brightness";
-"advanced.autoBrightness.explanation" = "Keep macOS automatic brightness on—it owns the ambient light sensor. On the built-in display Amber reads the resulting backlight in nits and stops dimming once the screen is already dark enough. External displays cannot be read, so the time curve runs unadjusted.";
+"advanced.autoBrightness.explanation" = "Keep macOS automatic brightness on—it owns the ambient light sensor. On built-in displays Amber tries to read the resulting backlight in nits and, where that reading proves to be live, stops dimming once the screen is already dark enough. On displays that cannot be read—or that report a frozen value—the time curve runs unadjusted.";
 "advanced.solarSource" = "Sunrise and sunset source";
 "advanced.launchAtLogin" = "Launch at login";
 "advanced.forceOverlay" = "Force overlay mode";
@@ -85,3 +85,6 @@
 "advanced.backlight" = "Measured backlight";
 "advanced.backlight.value" = "Built-in display: %.0f nits. Below %.0f nits Amber stops dimming further, so it never makes the screen harder to read than leaving it off.";
 "advanced.backlight.unavailable" = "Not readable on this display (external monitor or Intel Mac). Amber applies relative attenuation only.";
+"advanced.backlight.unverified" = "This display reports a backlight figure, but it has not changed once since launch, so Amber cannot confirm it is a live reading — on some Macs the key is a boot-time snapshot. Until it is seen to move, Amber treats it as unreadable and applies relative attenuation only.";
+"advanced.autoBrightness.system" = "macOS setting—hands the backlight to the ambient light sensor";
+"advanced.autoBrightness.unsupported" = "This display has no ambient light sensor (external monitor or Intel Mac), so the switch is unavailable. Amber applies relative attenuation only.";
