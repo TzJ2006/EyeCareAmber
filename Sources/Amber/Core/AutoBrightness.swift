@@ -86,17 +86,6 @@ enum AutoBrightness {
         return Double(value)
     }
 
-    /// 另一路亮度标度（0–1），**诊断专用**。读不到返回 nil。
-    ///
-    /// 与滑杆是两个不同的量，含义未证实 —— 实测两者曾同时反向变化，所以在
-    /// 搞清楚它到底是什么之前，它只是又一个被观察的标度，不是亮度。
-    static func linearBrightness() -> Double? {
-        guard let getLinearFn, let display = compensatingDisplay() else { return nil }
-        var value: Float = -1
-        guard getLinearFn(display, &value) == 0, value >= 0 else { return nil }
-        return Double(value)
-    }
-
     // MARK: - 内部
 
     private typealias GetBrightness =
@@ -104,8 +93,6 @@ enum AutoBrightness {
 
     private static let getBrightnessFn = lookup(
         "DisplayServicesGetBrightness", as: GetBrightness.self)
-    private static let getLinearFn = lookup(
-        "DisplayServicesGetLinearBrightness", as: GetBrightness.self)
 
     /// 挑一块真的支持环境光补偿的屏。传感器在内置屏上，所以只找内置屏；
     /// 外接屏即使 `has` 意外返回真也不碰，避免把设置写到一块没有 ALS 的屏上。

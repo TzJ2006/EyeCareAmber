@@ -44,7 +44,7 @@
 "advanced.title" = "Ajustes avanzados";
 "advanced.language" = "Idioma";
 "advanced.autoBrightness" = "Brillo automático";
-"advanced.autoBrightness.explanation" = "Mantén activado el brillo automático de macOS: el sensor de luz es suyo. En pantallas integradas Amber intenta leer la retroiluminación resultante en nits y, cuando esa lectura resulta estar viva, deja de atenuar si la pantalla ya está bastante oscura. En pantallas ilegibles o con un valor congelado, la curva temporal se aplica sin ajuste.";
+"advanced.autoBrightness.explanation" = "Mantén activado el brillo automático de macOS: el sensor de luz es suyo. En pantallas integradas Amber estima la retroiluminación en nits a partir de la escala de brillo del sistema y deja de atenuar si la pantalla ya está bastante oscura. Las pantallas externas no se pueden leer.";
 "advanced.solarSource" = "Fuente de amanecer y atardecer";
 "advanced.launchAtLogin" = "Abrir al iniciar sesión";
 "advanced.forceOverlay" = "Forzar modo de superposición";
@@ -83,8 +83,7 @@
 "phaseTune.eveningBrightness" = "Brillo vespertino";
 "phaseTune.eveningColorTemperature" = "Temperatura de color vespertina";
 "advanced.backlight" = "Retroiluminación medida";
-"advanced.backlight.value" = "Pantalla integrada: %.0f nits. Por debajo de %.0f nits, Amber deja de atenuar, para no volver la pantalla menos legible que sin él.";
+"advanced.backlight.value" = "Pantalla integrada: unos %.0f nits, una estimación modelada a partir de la escala de brillo del sistema, no una medición. Por debajo de %.0f nits, Amber deja de atenuar, para no volver la pantalla menos legible que sin él.";
 "advanced.backlight.unavailable" = "No legible en esta pantalla (monitor externo o Mac Intel). Amber solo aplica atenuación relativa.";
-"advanced.backlight.unverified" = "Esta pantalla informa un valor de retroiluminación, pero no ha cambiado desde el inicio, así que Amber no puede confirmar que sea una lectura en vivo: en algunos Mac esa clave es una instantánea del arranque. Hasta verla moverse, Amber la trata como ilegible y solo aplica atenuación relativa.";
 "advanced.autoBrightness.system" = "Ajuste de macOS: cede la retroiluminación al sensor de luz ambiental";
 "advanced.autoBrightness.unsupported" = "Esta pantalla no tiene sensor de luz ambiental (monitor externo o Mac Intel), así que el interruptor no está disponible. Amber solo aplica atenuación relativa.";

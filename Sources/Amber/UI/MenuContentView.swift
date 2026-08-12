@@ -395,12 +395,8 @@ struct MenuContentView: View {
     }
 
     private var backlightDescription: String {
-        if let nits = engine.backlightNits {
-            return tr("advanced.backlight.value", nits, Schedule.comfortFloorNits)
-        }
-        return BacklightReader.rawNitsForDiagnostics() == nil
-            ? tr("advanced.backlight.unavailable")
-            : tr("advanced.backlight.unverified")
+        guard let nits = engine.backlightNits else { return tr("advanced.backlight.unavailable") }
+        return tr("advanced.backlight.value", nits, Schedule.comfortFloorNits)
     }
 
     /// 系统「自动调节亮度」开关。

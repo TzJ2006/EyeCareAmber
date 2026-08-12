@@ -61,11 +61,20 @@ cd EyeCareAmber && ./build.sh --install
 
 `--ambient` 是唯一会去读传感器的诊断命令，但它输出的是**未经标定、没有单位的原始读数** —— 没有和照度计比对过，所以它不是 lux，也不能当 lux 用。运行中的程序不消费这个值，界面上也不会显示它。
 
-但在内置屏上，Amber 会尝试从 IORegistry 的 `AppleARMBacklight` 读取由此得到的背光 nits。这个读数只要是活的，就补上了纯相对衰减补不上的那一环：同样的 ×0.75 系数，在 400 nits 背光下是 119 nits，在 30 nits 背光下只有 8.9 nits，而后者低于所有已发表的舒适下界。屏幕已经够暗时 Amber 就停止继续压暗 —— 保证任何情况下都不会比不开它更难看清。
+但在内置屏上，Amber 会估算由此得到的背光 nits。这补上了纯相对衰减补不上的那一环：同样的 ×0.75 系数，在 400 nits 背光下是 119 nits，在 30 nits 背光下只有 8.9 nits，而后者低于所有已发表的舒适下界。屏幕已经够暗时 Amber 就停止继续压暗 —— 保证任何情况下都不会比不开它更难看清。
 
-**但这个读数并非在每台 Mac 上都是活的。** 在一台 Mac16,7 / macOS 26.5.2 上它从不更新：遮住传感器后，macOS 一秒内就动了自己的亮度滑杆、屏幕肉眼可见地变化，而 `BrightnessMilliNits` 连续七小时逐字节不变，`brightness`、`rawBrightness`、`BrightnessMicroAmps` 同样冻结，`CurrentNits` 恒为 0。走 `backlight report / brightness report` 的 IOReport 通道拿到的是同一批死值，整个 IORegistry 再没有第二处发布 nits。该机报告 `new-backlight-architecture = Yes`，老键看来已经废弃。
+**IORegistry 直接报出的 nits 不能用。** 在一台 Mac16,7 / macOS 26.5.2 上那个键从不更新：遮住传感器后，macOS 一秒内就动了自己的亮度滑杆、屏幕肉眼可见地变化，而 `BrightnessMilliNits` 连续七小时逐字节不变，`brightness`、`rawBrightness`、`BrightnessMicroAmps` 同样冻结，`CurrentNits` 恒为 0。走 `backlight report / brightness report` 的 IOReport 通道拿到的是同一批死值，整个 IORegistry 再没有第二处发布 nits。该机报告 `new-backlight-architecture = Yes`，老键看来已经废弃。一个看起来合理的冻结值比没有值更糟 —— v1.1.0 发出去的正是这个，还把它当实测值显示。
 
-一个看起来合理的冻结值比没有值更糟，所以 Amber 给它加了闸门：只有在观察到它确实变化之后才采用；在那之前一律当作这块屏读不到，只按相对衰减执行时间曲线 —— 与外接屏、Intel Mac 的处理相同。
+所以这个数字是**模型值，不是实测值**，改由两个活的 `DisplayServices` 标度重建：
+
+```
+满量程 = 面板最小亮度 / linear 最小可用值
+nits   = linear × 满量程
+```
+
+把 linear 当作与亮度成正比，有三条支撑：滑杆拉到底时它精确等于 1.0000（前提是关掉自动亮度，开着会被压到约 0.667）；与滑杆在整个行程上同向单调；以及由此反解出的满量程 —— 上述机器上是 586 nits —— 与该面板标称的 600 nits SDR 上限相差不到 3%。推导本身也自洽：「linear 的最小可用值」与「面板的最小亮度」指的是同一个物理点。面板下限取自 `BrightnessMilliNits.min`，那是结构性元数据，不是会冻结的那个 value。
+
+它从未与光度计比对过，所以界面上写的是「约 N nits，模型估算值」；模型建不起来的场合 —— 外接屏、Intel Mac、符号改名 —— 一律当作这块屏读不到，只按相对衰减执行时间曲线。
 
 这套分工只在系统那一侧确实开着时才成立，所以高级设置里带了一个开关。它通过 `DisplayServices` 直接读写 macOS 的“自动调节亮度”——就是“系统设置 → 显示器”里的那一项。界面上的状态永远是从系统回读的，不会缓存成 Amber 自己的偏好；没有环境光传感器的屏幕上开关会被禁用。Amber 依旧不读照度、也不自己设置背光：写背光只会和它刚交还回去的那个控制环打架。
 
@@ -220,7 +229,7 @@ python3 Scripts/check-readme-parity.py  # 两份 README 的命令、参数、数
 ## 已知限制
 
 - **别同时开系统「夜览」**。它工作在 gamma 层之下，并不会覆写 LUT —— 两者的变暖效果是相乘叠加，结果比任何一方想要的都更暖。真正会争抢同一张表的是 f.lux、Lunar、BetterDisplay 与 MonitorControl；程序每 15 分钟会检查 LUT 有没有被它们覆写，被覆写时会把对方的表当作新基线重新接管 —— 但这只是止损，不是好的使用方式。
-- 绝对 nits 只在 Apple Silicon 内置屏上可读，依赖一个未公开、Apple 随时可能改名的 IORegistry 键，而且**在部分 Mac 上这个键是从不更新的开机快照**。Amber 只在观察到它变化之后才采用。外接屏、Intel Mac、该键位置变动、或读数冻结时，Amber 退回纯相对衰减，舒适下界无法强制。
+- 绝对 nits 是**模型值，从来不是实测值**，且只在 Apple Silicon 内置屏上可得，依赖两个未公开的 `DisplayServices` 符号加一个 IORegistry 元数据字段，任何一个 Apple 都可能改名。该模型未与光度计比对过。外接屏、Intel Mac、或任一输入缺失时，Amber 退回纯相对衰减，舒适下界无法强制。
 - 「自动调节亮度」开关同样走未公开接口（`DisplayServices` 的三个符号，用 `dlsym` 弱查找）。符号消失时该开关自动禁用，其余功能不受影响；也因为用到私有 API，Amber 不适合上架 Mac App Store。
 - LUT 压暗只缩放白场、不动黑电平，所以 LCD 上屏幕实测对比度会随输出系数一起下降。mini-LED XDR 面板上这个损失可忽略，MacBook Air 上则不然。
 - 写 gamma 表会让 macOS 在 Amber 生效期间关闭 HDR/EDR。

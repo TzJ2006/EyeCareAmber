@@ -179,7 +179,7 @@ enum Diagnostics {
             file.write(Data((line + "\n").utf8))
         }
         append("iso_time,elapsed_s,source,level,ch1,ch2,"
-             + "backlight_nits,slider,linear,brightness,raw_brightness,phase")
+             + "modeled_nits,registry_nits,slider,linear,brightness,raw_brightness,phase")
 
         let started = Date()
         var samples: [Reading] = []
@@ -188,33 +188,42 @@ enum Diagnostics {
         func record(_ source: String, _ sample: AmbientLightReader.Sample) {
             let elapsed = Date().timeIntervalSince(started)
             let parameters = BacklightReader.diagnosticParameters()
+            func field(_ key: String) -> Int? {
+                BacklightReader.parameterField(key, "value", in: parameters).map(Int.init)
+            }
             let reading = Reading(
                 elapsed: elapsed,
                 source: source,
                 level: sample.level,
                 nits: BacklightReader.currentNits(),
+                registryNits: BacklightReader.parameterField(
+                    "BrightnessMilliNits", "value", in: parameters).map { $0 / 1_000 },
                 slider: AutoBrightness.sliderValue(),
-                linear: AutoBrightness.linearBrightness(),
+                linear: BacklightReader.linearBrightness(),
                 // 同一张字典里的另外两个独立标度。多个标度一起看才能分清
                 // 「背光真没动」和「只是某一个读数陈旧」。
-                brightness: BacklightReader.diagnosticValue("brightness", in: parameters),
-                rawBrightness: BacklightReader.diagnosticValue("rawBrightness", in: parameters))
+                brightness: field("brightness"),
+                rawBrightness: field("rawBrightness"))
             samples.append(reading)
             guide?.consume(reading)
 
             func text(_ value: Double?, _ format: String) -> String {
                 value.map { String(format: format, $0) } ?? ""
             }
-            append([ISO8601DateFormatter().string(from: Date()),
-                    String(format: "%.3f", elapsed), source,
-                    String(format: "%.1f", sample.level),
-                    String(format: "%.1f", sample.channel1),
-                    String(format: "%.1f", sample.channel2),
-                    text(reading.nits, "%.1f"), text(reading.slider, "%.4f"),
-                    text(reading.linear, "%.4f"),
-                    reading.brightness.map(String.init) ?? "",
-                    reading.rawBrightness.map(String.init) ?? "",
-                    currentPhaseName()].joined(separator: ","))
+            var columns: [String] = [ISO8601DateFormatter().string(from: Date())]
+            columns.append(String(format: "%.3f", elapsed))
+            columns.append(source)
+            columns.append(String(format: "%.1f", sample.level))
+            columns.append(String(format: "%.1f", sample.channel1))
+            columns.append(String(format: "%.1f", sample.channel2))
+            columns.append(text(reading.nits, "%.1f"))
+            columns.append(text(reading.registryNits, "%.1f"))
+            columns.append(text(reading.slider, "%.4f"))
+            columns.append(text(reading.linear, "%.4f"))
+            columns.append(reading.brightness.map(String.init) ?? "")
+            columns.append(reading.rawBrightness.map(String.init) ?? "")
+            columns.append(currentPhaseName())
+            append(columns.joined(separator: ","))
 
             guard guide == nil else { return }
             print(String(format: "  +%7.2fs  %@  level=%8.1f  nits=%@  滑杆=%@  raw=%@",
@@ -604,7 +613,10 @@ enum Diagnostics {
         let elapsed: Double
         let source: String
         let level: Double
+        /// 模型估算的背光 nits（`BacklightReader.currentNits()`）。
         let nits: Double?
+        /// IORegistry 直接报出的 nits，仅作对照 —— 在部分机器上是开机快照。
+        let registryNits: Double?
         let slider: Double?
         let linear: Double?
         let brightness: Int?
@@ -920,14 +932,25 @@ enum Diagnostics {
         }
         print("  注：Amber 只能控制相对衰减，落点由系统背光决定，无法运行时保证绝对 nits。")
 
-        print("\n── 背光读数与安全下限反解")
-        if let nits = BacklightReader.rawNitsForDiagnostics() {
-            // 刻意用未经闸门的原始值，并明确标注它有没有被证明是活的 ——
-            // 诊断要能看见真实情况，但不能让人误以为那是实测量。
-            print(String(format: "IORegistry 报出的背光：%.1f nits（%@）", nits,
-                         BacklightReader.isProvenLive
-                            ? "本进程内已观察到它变化，视为有效"
-                            : "本进程内尚未观察到它变化，决策路径按「读不到」处理"))
+        currentLandingPoints()
+
+        print("\n── 背光模型与安全下限反解")
+        // 把模型的每一步都摊开。这个数是推出来的，不是量出来的，
+        // 诊断里必须能看见它由什么组成，否则又会被当成实测值。
+        if let scale = BacklightReader.fullScaleNits(),
+           let linear = BacklightReader.linearBrightness(),
+           let minMilli = BacklightReader.parameterField("BrightnessMilliNits", "min"),
+           let range = BacklightReader.linearUsableRange() {
+            print(String(format: "满量程 = 面板下限 %.3f nits ÷ linear 下限 %.5f = %.0f nits",
+                         minMilli / 1_000, range.lower, scale))
+            print(String(format: "linear = %.4f  →  模型背光 %.1f nits", linear, linear * scale))
+            if let registry = BacklightReader.registryNitsForDiagnostics() {
+                print(String(format: "对照：IORegistry 直接报出 %.1f nits%@", registry,
+                             abs(registry - linear * scale) / max(linear * scale, 1) > 0.2
+                                ? "（相差超过 20%，该键很可能是开机快照）" : ""))
+            }
+        }
+        if let nits = BacklightReader.currentNits() {
             for scenario in [nits, 160.0, 80.0, 30.0] {
                 let raw = LightTarget(cct: Settings().nightCCT,
                                       brightness: Settings().nightBrightness,
@@ -1157,7 +1180,7 @@ enum Diagnostics {
         migrationCheck()
         sciencePresetCheck()
         comfortFloorCheck()
-        backlightGateCheck()
+        backlightModelCheck()
         autoBrightnessCheck()
         colorScience()
         melanopicCurve()
@@ -1311,30 +1334,63 @@ enum Diagnostics {
         print("✓ 暗环境安全下限：只抬不降、上限 1.0、不改色温、背光未知时不生效\n")
     }
 
-    /// 背光读数的实时性闸门自检。
+    /// **你当前保存的设置**各时段会落到多少 cd/m²。
     ///
-    /// 唯一的不变量是**单向**的：`currentNits()` 给出值 ⇒ 该读数已被证明会变化。
-    /// 不能反过来断言「一定返回 nil」—— 在读数正常的机器上它本来就该给出值。
-    /// 这条写法与机器无关，任何一台上都成立。
-    private static func backlightGateCheck() {
-        let before = BacklightReader.isProvenLive
-        let gated = BacklightReader.currentNits()
-        assert(gated == nil || BacklightReader.isProvenLive,
-               "闸门被绕过：未证明实时却给出了 nits")
+    /// 与上面的预设对比表不同，这里读的是 `Settings.load()` —— 也就是你自己拖过的值，
+    /// 不是出厂默认。存在的理由是把「拖滑杆 → 看落点」这个循环闭上：改完跑一次就知道
+    /// 落在哪，不用拍脑袋。
+    ///
+    /// 绝对值依赖背光模型，读不到就只打相对输出。
+    private static func currentLandingPoints() {
+        let settings = Settings.load()
+        let backlight = BacklightReader.currentNits()
 
-        // 同一个值重复读不得把它「证明」成活的。
-        _ = BacklightReader.currentNits()
-        if !before, BacklightReader.rawNitsForDiagnostics() != nil {
-            assert(BacklightReader.isProvenLive == false || gated != nil,
-                   "读数没变却被判成实时")
+        print("\n── 你当前设置的落点"
+            + (backlight.map { String(format: "（模型背光 %.1f nits）", $0) } ?? "（背光读不到）"))
+
+        let phases: [(String, Double, Double)] = [
+            ("白天", settings.dayCCT, settings.dayBrightness),
+            ("傍晚", settings.eveningCCT, settings.eveningBrightness),
+            ("深夜", settings.nightCCT, settings.nightBrightness),
+        ]
+        for (name, cct, brightness) in phases {
+            let target = LightTarget(cct: cct, brightness: brightness,
+                                     extraDim: settings.globalExtraDim, phase: .manual)
+            let output = ColorScience.metrics(for: target.effectiveGain).photopicRatio
+            let absolute = backlight.map { String(format: "  →  %6.1f cd/m²", output * $0) } ?? ""
+            print(String(format: "%@  %.0fK ×%.2f   相对输出 %5.1f%%%@",
+                         pad(name, 6), cct, brightness, output * 100, absolute))
         }
 
-        let raw = BacklightReader.rawNitsForDiagnostics()
-        print("✓ 背光实时性闸门：原始读数 "
-            + (raw.map { String(format: "%.1f nits", $0) } ?? "无")
-            + "，决策路径 "
-            + (BacklightReader.isProvenLive ? "已确认实时，采用" : "未确认实时，按读不到处理")
-            + "\n")
+        // Kim et al. 2017（Optical Engineering 56(1):017110, n=30）的舒适**下沿**。
+        // 上沿分别是 516 / 664 / 737，日常不会碰到，所以只列下沿。
+        print("        对照 Kim 2017 舒适下沿：50 lx → 113   500 lx → 154   1000 lx → 177 cd/m²")
+    }
+
+    /// 背光模型的自洽性自检。
+    ///
+    /// 模型是推出来的，不是量出来的，所以能查的只有内部一致性：满量程落在合理
+    /// 区间、`linear` 落在自己声明的可用区间内、反解出的 nits 不越过满量程。
+    /// **这些都不能证明模型是对的** —— 那要靠色度计。它们只能挡住「某个私有符号
+    /// 换了含义」这一类失效。
+    private static func backlightModelCheck() {
+        guard let scale = BacklightReader.fullScaleNits(),
+              let linear = BacklightReader.linearBrightness(),
+              let range = BacklightReader.linearUsableRange(),
+              let nits = BacklightReader.currentNits()
+        else {
+            print("✓ 背光模型：这块屏推不出满量程（外接屏 / Intel / 符号变更），"
+                + "决策路径按读不到处理\n")
+            return
+        }
+
+        assert(scale > 50 && scale < 5_000, "满量程 \(scale) nits 不像真的面板")
+        assert(linear >= 0 && linear <= range.upper, "linear 越过了自己声明的可用上限")
+        assert(nits <= scale * 1.001, "反解出的 nits 超过了满量程")
+        assert(abs(nits - linear * scale) < 0.001, "currentNits 与模型不一致")
+
+        print(String(format: "✓ 背光模型：满量程 %.0f nits，linear %.4f → %.1f nits（模型值，非实测）\n",
+                     scale, linear, nits))
     }
 
     /// 系统自动亮度开关的可用性自检。
