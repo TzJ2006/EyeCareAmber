@@ -179,7 +179,8 @@ enum Diagnostics {
             file.write(Data((line + "\n").utf8))
         }
         append("iso_time,elapsed_s,source,level,ch1,ch2,"
-             + "modeled_nits,registry_nits,slider,linear,brightness,raw_brightness,phase")
+             + "modeled_nits,registry_nits,slider,linear,brightness,raw_brightness,"
+             + "output_ratio,screen_cd_m2,phase")
 
         let started = Date()
         var samples: [Reading] = []
@@ -188,6 +189,7 @@ enum Diagnostics {
         func record(_ source: String, _ sample: AmbientLightReader.Sample) {
             let elapsed = Date().timeIntervalSince(started)
             let parameters = BacklightReader.diagnosticParameters()
+            let outputRatio = ColorScience.metrics(for: currentTarget().effectiveGain).photopicRatio
             func field(_ key: String) -> Int? {
                 BacklightReader.parameterField(key, "value", in: parameters).map(Int.init)
             }
@@ -203,7 +205,9 @@ enum Diagnostics {
                 // 同一张字典里的另外两个独立标度。多个标度一起看才能分清
                 // 「背光真没动」和「只是某一个读数陈旧」。
                 brightness: field("brightness"),
-                rawBrightness: field("rawBrightness"))
+                rawBrightness: field("rawBrightness"),
+                outputRatio: outputRatio,
+                screenNits: BacklightReader.currentNits().map { $0 * outputRatio })
             samples.append(reading)
             guide?.consume(reading)
 
@@ -222,6 +226,8 @@ enum Diagnostics {
             columns.append(text(reading.linear, "%.4f"))
             columns.append(reading.brightness.map(String.init) ?? "")
             columns.append(reading.rawBrightness.map(String.init) ?? "")
+            columns.append(String(format: "%.4f", reading.outputRatio))
+            columns.append(text(reading.screenNits, "%.1f"))
             columns.append(currentPhaseName())
             append(columns.joined(separator: ","))
 
@@ -621,6 +627,10 @@ enum Diagnostics {
         let linear: Double?
         let brightness: Int?
         let rawBrightness: Int?
+        /// 此刻 Amber 施加的相对光度输出（LUT + 覆盖层之后）。
+        let outputRatio: Double
+        /// 屏幕白场的模型落点 = 模型背光 × outputRatio。
+        let screenNits: Double?
     }
 
     /// Gate A 的两条判据，直接由数据判定，不靠肉眼扫 CSV。
@@ -804,8 +814,13 @@ enum Diagnostics {
     private static let probeSettings = Settings.load()
 
     private static func currentPhaseName() -> String {
-        let target = Schedule.evaluate(at: Date(), settings: probeSettings, solar: nil).target
-        return target.phase.title(in: probeSettings.language)
+        currentTarget().phase.title(in: probeSettings.language)
+    }
+
+    /// 此刻排班算出的目标。watch 模式每行都要它 —— 只有把「Amber 正在施加多少衰减」
+    /// 和「系统认为这个房间该多亮」记在同一行，事后才能回答「屏幕相对房间是不是太暗」。
+    private static func currentTarget() -> LightTarget {
+        Schedule.evaluate(at: Date(), settings: probeSettings, solar: nil).target
     }
 
     /// 读 / 写系统「自动调节亮度」，走的正是界面开关的那条路径。
