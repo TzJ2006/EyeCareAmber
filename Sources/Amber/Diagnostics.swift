@@ -929,11 +929,10 @@ enum Diagnostics {
         let night = presetMetrics(cct: Settings().nightCCT,
                                   coefficient: Settings().nightBrightness, extraDim: 0)
 
-        // 暗环境舒适下界。文献值分散度接近 5 倍（Li 2013 = 11、Na & Suk 2015 = 10–40、
-        // Zhou 2021 在 0 lx 下 = 20.63–36.2、朱念芳 2022 ≈ 50、Ye 2014 = 55、
-        // Lin 2022 在 1 lx 下 = 63.9 cd/m²），所以这里取的是「下界」而不是「最优值」：
-        // Yu & Akita 2019 报告 9 cd/m² 会引发身体 + 心理 + 视觉三类疲劳，
-        // 25 cd/m² 只剩视觉疲劳。
+        // 暗环境舒适下界。文献值分散度超过 6 倍（已核对原文的：Na & Suk 2015 = 10–40、
+        // Zhou 2021 在 0 lx 下 = 20.63–36.2、Lin 2022 在 1 lx 下 = 63.9 cd/m²），
+        // 所以这里取的是「下界」而不是「最优值」。详见 Schedule.comfortFloorNits ——
+        // 那里也记着此前误把 Yu & Akita 2019 的环境亮度当成屏幕亮度引用的经过。
         let comfortFloorNits = 20.0
 
         print("\n── 假设系统背光情景（演算值，不是运行时测量）")

@@ -123,7 +123,7 @@ Nagare, Plitnick & Figueiro (2019) 测试了 iPad 的「夜览」功能对褪黑
 
 本软件因此把光谱与剂量同时纳入预设：睡前使用 4300 K ×0.55，模型相对输出约 42.6%；深夜使用 2700 K ×0.56，约 30.0%。这里的系数是叠加在系统背光之上的 LUT 衰减，不是硬件亮度；滑杆同时显示“系数”和模型“相对输出”。
 
-深夜这一对值是为了同时满足两个终点而定的。先定住亮度：约 30% 相对输出，在常见的昏暗房间背光下落在 36 cd/m² 附近，正对上 Li et al. (2026) 的低刺激条件 —— 那一档在 DLMO、皮质醇、主观睡眠、视觉疲劳**和**认知表现上同时改善，是唯一一个两个终点都往好处走的实测亮度。而屏幕过暗本身就是疲劳来源（Yu & Akita 2019：9 cd/m² 引发身体、心理与视觉三类疲劳，25 cd/m² 只剩视觉疲劳）。
+深夜这一对值是为了同时满足两个终点而定的。先定住亮度：约 30% 相对输出，在常见的昏暗房间背光下落在 36 cd/m² 附近，正对上 Li et al. (2026) 的低刺激条件 —— 那一档在 DLMO、皮质醇、主观睡眠、视觉疲劳**和**认知表现上同时改善，是唯一一个两个终点都往好处走的实测亮度。屏幕过暗同样有代价，但通常被引来支持这一点的那篇研究，测的并不是被引用的那件事：Yu & Akita (2019) 里的 9 与 25 cd/m² 是**房间**的亮度，不是屏幕的 —— 在更暗的房间里读平板会引发身体、心理与视觉三类疲劳，在没那么暗的房间里只剩视觉疲劳。这是关于屏幕与房间亮度比的证据，不是关于屏幕绝对下限的证据。
 
 色温则取在两条代价曲线的交叉点。固定上述亮度后，屏幕越暖 melanopic 输出近似线性下降，蓝通道却是断崖式的：从 2700 K 再降到 1950 K，melanopic 只再降约 5 个百分点，蓝通道增益却从 0.101 塌到 0.0037，相差 27 倍，蓝色界面元素直接变黑。比 2700 K 更暖，就是付出的多、拿到的少了。
 
@@ -137,7 +137,7 @@ Nagare, Plitnick & Figueiro (2019) 测试了 iPad 的「夜览」功能对褪黑
 
 ### 傍晚为什么也要降亮度
 
-ISO 9241-303 建议在 500 lx 水平照度下屏幕亮度取 100–150 cd/m²。低照度环境下的舒适区间要低得多，但文献对「低到哪里」并不统一：已发表的暗环境最优值大致散布在 20–65 cd/m²，跨研究相差接近五倍。Amber 因此把 20 cd/m² 当作下界而非目标。 这个分散只针对接近全黑的房间；房间一亮，同一批文献就自相矛盾到三倍 —— Kim et al. (2017) 在 50 lx 给出的舒适下沿是 113 cd/m²，而 Zhou et al. (2021) 在同样照度下实测的最优值是 34.5 与 41.4 cd/m²。不存在与环境无关的下界。天黑了屏幕还维持正午亮度，是傍晚视觉不适的主要来源之一 —— 这就是「黄昏」过渡段存在的理由。
+ISO 9241-303 建议在 500 lx 水平照度下屏幕亮度取 100–150 cd/m²。低照度环境下的舒适区间要低得多，但文献对「低到哪里」并不统一：Na & Suk (2015) 实测初看为 10 cd/m²、持续阅读为 40，Zhou et al. (2021) 在 0 lx 下三个终点分别是 20.63 到 36.20，Lin et al. (2022) 在 1 lx 下是 63.9 —— 跨研究相差六倍。Amber 因此把 20 cd/m² 当作下界而非目标，取的是这个分散区间的下沿，而不是任何单一研究的结论。 这个分散只针对接近全黑的房间；房间一亮，同一批文献就自相矛盾到三倍 —— Kim et al. (2017) 在 50 lx 给出的舒适下沿是 113 cd/m²，而 Zhou et al. (2021) 在同样照度下实测的最优值是 34.5 与 41.4 cd/m²。不存在与环境无关的下界。天黑了屏幕还维持正午亮度，是傍晚视觉不适的主要来源之一 —— 这就是「黄昏」过渡段存在的理由。
 
 ---
 
@@ -281,10 +281,16 @@ Scripts/
 - Nagare R, Plitnick B, Figueiro MG (2019). Does the iPad Night Shift mode reduce melatonin suppression? *Lighting Research & Technology* 51(3): 373–383. https://doi.org/10.1177/1477153517748189
 - Zhou Y, Shi H, Chen Q-W, Ru T, Zhou G (2021). Investigation of the optimum display luminance of an LCD screen under different ambient illuminances in the evening. *Applied Sciences* 11(9): 4108. https://doi.org/10.3390/app11094108
 - Kim SR, Lee SH, Jeon DH, Kim JS, Lee SW (2017). Optimum display luminance dependence on ambient illuminance. *Optical Engineering* 56(1): 017110. https://doi.org/10.1117/1.OE.56.1.017110
+- Na N, Suk H-J (2015). Adaptive display luminance for viewing smartphones under low illuminance. *Optics Express* 23(13): 16912–16920. https://doi.org/10.1364/OE.23.016912
+- Lin C, Yi X, Ji Z, Hou D, Lin Y (2022). Optimum display luminance under a wide range of ambient light for cockpit displays. *Optics Express* 30(21): 38439–38457. https://doi.org/10.1364/OE.466039
+- Yu H, Akita T (2019). Effect of luminance contrast ratio of character on readability and visual fatigue during long-term reading using tablet PC in low luminance environment. *Journal of the Architectural Institute of Korea Structure & Construction* 35(5): 191–202. https://doi.org/10.5659/JAIK_SC.2019.35.5.191
 - Xie X, Yu S, Chen D (2025). Effects of screen color mode and color temperature on visual fatigue under different ambient illuminations. *International Journal of Human–Computer Interaction* 41(2): 821–833. https://doi.org/10.1080/10447318.2024.2305982
 - Nagare R, Rea MS, Plitnick B, Figueiro MG (2019). Nocturnal melatonin suppression by adolescents and adults for different levels, spectra, and durations of light exposure. *Journal of Biological Rhythms* 34(2): 178–194. https://doi.org/10.1177/0748730419828056
 - Wood B, Rea MS, Plitnick B, Figueiro MG (2013). Light level and duration of exposure determine the impact of self-luminous tablets on melatonin suppression. *Applied Ergonomics* 44(2): 237–240. https://doi.org/10.1016/j.apergo.2012.07.008
-- Burkhart K, Phelps JR (2009). Amber lenses to block blue light and improve sleep: a randomized trial. *Chronobiology International* 26(8): 1602–1612.
+- Li Z, Zhu Y, Ye Q, Luo MR (2026). Impact of mobile display background illuminance and spectrum on circadian rhythms, visual fatigue, and cognitive performance in nighttime environments. *Building and Environment* 288: 113961. https://doi.org/10.1016/j.buildenv.2025.113961
+- Phillips AJK, Vidafar P, Burns AC, McGlashan EM, Anderson C, Rajaratnam SMW, Lockley SW, Cain SW (2019). High sensitivity and interindividual variability in the response of the human circadian system to evening light. *PNAS* 116(24): 12019–12024. https://doi.org/10.1073/pnas.1901824116
+- Burkhart K, Phelps JR (2009). Amber lenses to block blue light and improve sleep: a randomized trial. *Chronobiology International* 26(8): 1602–1612. https://doi.org/10.3109/07420520903523719
+- Shechter A, Kim EW, St-Onge M-P, Westwood AJ (2018). Blocking nocturnal blue light for insomnia: a randomized controlled trial. *Journal of Psychiatric Research* 96: 196–202. https://doi.org/10.1016/j.jpsychires.2017.10.015
 - CIE S 026/E:2018. *System for Metrology of Optical Radiation for ipRGC-Influenced Responses to Light.*
 - Govardovskii VI, Fyhrquist N, Reuter T, et al. (2000). In search of the visual pigment template. *Visual Neuroscience* 17(4): 509–528.
 - Wyman C, Sloan PP, Shirley P (2013). Simple analytic approximations to the CIE XYZ color matching functions. *Journal of Computer Graphics Techniques* 2(2): 1–11.
@@ -310,4 +316,4 @@ swift build && swift run Amber --selftest && python3 Scripts/check-localization.
 
 [MIT](LICENSE)
 
-本项目不是医疗器械，也不提供医学建议。所有参数是基于公开文献的**工程起点**，不是临床阈值。个体对夜间光的敏感度差异可超过一个数量级（Phillips et al., 2019），有睡眠障碍或眼科疾病请咨询专业人士。
+本项目不是医疗器械，也不提供医学建议。所有参数是基于公开文献的**工程起点**，不是临床阈值。个体对夜间光的敏感度差异超过 50 倍：Phillips et al. (2019) 在 55 名受试者中测得半数褪黑素抑制的照度落在 6 到 350 lux 之间。有睡眠障碍或眼科疾病请咨询专业人士。
